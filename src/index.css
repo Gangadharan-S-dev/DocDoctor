@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { scroll-behavior: smooth; }
+body { @apply bg-paper text-ink-950 font-sans antialiased; }
+::selection { background: #1D6FF2; color: #fff; }
+:focus-visible { outline: 2px solid #1D6FF2; outline-offset: 2px; border-radius: 6px; }
+
+@layer components {
+  .btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-xl bg-ink-950 px-5 py-3 text-sm font-bold text-white shadow-card transition hover:bg-ink-800 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-accent { @apply inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-bold text-white shadow-card transition hover:bg-accent-dark active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-ink-900 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[.98]; }
+  .card { @apply rounded-2xl border border-slate-200/80 bg-white shadow-card; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600; }
+  .input { @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-ink-950 placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/10; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

@@ -1,0 +1,244 @@
+import { PDFDocument, degrees, rgb, StandardFonts } from 'pdf-lib'
+import type { OutputFile } from './download'
+import { stem } from './download'
+
+const pdfBlob = (bytes: Uint8Array): Blob =>
+  new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' })
+
+async function load(bytes: ArrayBuffer) {
+  return PDFDocument.load(bytes, { ignoreEncryption: false })
+}
+
+/** Parse "1-3, 5, 8-10" (1-based) into sorted unique 0-based indices. */
+export function parseRanges(input: string, pageCount: number): number[] {
+  const out = new Set<number>()
+  for (const part of input.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/)
+    if (m) {
+      let a = parseInt(m[1]), b = parseInt(m[2])
+      if (a > b) [a, b] = [b, a]
+      for (let p = a; p <= b; p++) if (p >= 1 && p <= pageCount) out.add(p - 1)
+    } else if (/^\d+$/.test(part)) {
+      const p = parseInt(part)
+      if (p >= 1 && p <= pageCount) out.add(p - 1)
+    } else throw new Error(`Invalid page range: "${part}". Use e.g. 1-3, 5, 8.`)
+  }
+  if (!out.size) throw new Error('No valid pages selected.')
+  return [...out].sort((a, b) => a - b)
+}
+
+export async function mergePdfs(files: File[]): Promise<OutputFile> {
+  if (files.length < 2) throw new Error('Select at least two PDFs to merge.')
+  const out = await PDFDocument.create()
+  for (const f of files) {
+    const src = await load(await f.arrayBuffer())
+    const pages = await out.copyPages(src, src.getPageIndices())
+    pages.forEach((p) => out.addPage(p))
+  }
+  return { name: 'merged.pdf', blob: pdfBlob(await out.save()) }
+}
+
+export async function splitPdf(file: File, ranges: string): Promise<OutputFile[]> {
+  const src = await load(await file.arrayBuffer())
+  const groups = ranges.split(';').map((s) => s.trim()).filter(Boolean)
+  const outs: OutputFile[] = []
+  if (groups.length <= 1 && !ranges.includes(';')) {
+    // Single range field may contain commas = one output with those pages.
+    const idx = parseRanges(ranges, src.getPageCount())
+    const doc = await PDFDocument.create()
+    ;(await doc.copyPages(src, idx)).forEach((p) => doc.addPage(p))
+    outs.push({ name: `${stem(file.name)}-pages.pdf`, blob: pdfBlob(await doc.save()) })
+    return outs
+  }
+  for (let i = 0; i < groups.length; i++) {
+    const idx = parseRanges(groups[i], src.getPageCount())
+    const doc = await PDFDocument.create()
+    ;(await doc.copyPages(src, idx)).forEach((p) => doc.addPage(p))
+    outs.push({ name: `${stem(file.name)}-part${i + 1}.pdf`, blob: pdfBlob(await doc.save()) })
+  }
+  return outs
+}
+
+export async function removePages(file: File, remove: number[]): Promise<OutputFile> {
+  const src = await load(await file.arrayBuffer())
+  const keep = src.getPageIndices().filter((i) => !remove.includes(i))
+  if (!keep.length) throw new Error('You cannot remove every page.')
+  const doc = await PDFDocument.create()
+  ;(await doc.copyPages(src, keep)).forEach((p) => doc.addPage(p))
+  return { name: `${stem(file.name)}-edited.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+export async function extractPages(file: File, keep: number[]): Promise<OutputFile> {
+  const src = await load(await file.arrayBuffer())
+  if (!keep.length) throw new Error('Select at least one page to extract.')
+  const doc = await PDFDocument.create()
+  ;(await doc.copyPages(src, [...keep].sort((a, b) => a - b))).forEach((p) => doc.addPage(p))
+  return { name: `${stem(file.name)}-extracted.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+export interface PageOp { index: number; rotation: number; deleted: boolean }
+
+export async function organizePdf(file: File, ops: PageOp[]): Promise<OutputFile> {
+  const src = await load(await file.arrayBuffer())
+  const active = ops.filter((o) => !o.deleted)
+  if (!active.length) throw new Error('You cannot delete every page.')
+  const doc = await PDFDocument.create()
+  const copied = await doc.copyPages(src, active.map((o) => o.index))
+  copied.forEach((p, i) => {
+    const rot = active[i].rotation % 360
+    if (rot) p.setRotation(degrees((p.getRotation().angle + rot) % 360))
+    doc.addPage(p)
+  })
+  return { name: `${stem(file.name)}-organized.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+export async function rotatePdf(file: File, deg: number, pages: number[] | 'all'): Promise<OutputFile> {
+  const doc = await load(await file.arrayBuffer())
+  const targets = pages === 'all' ? doc.getPageIndices() : pages
+  for (const i of targets) {
+    const p = doc.getPage(i)
+    p.setRotation(degrees((p.getRotation().angle + deg) % 360))
+  }
+  return { name: `${stem(file.name)}-rotated.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+/**
+ * Browser-side recompression: rebuilds the document, strips metadata and
+ * stores objects in compressed streams. Honest limitation: scanned/image-heavy
+ * PDFs may not shrink much — we always report the real before/after sizes.
+ */
+export async function compressPdf(file: File, level: 'less' | 'recommended' | 'extreme'): Promise<OutputFile> {
+  const src = await load(await file.arrayBuffer())
+  const doc = await PDFDocument.create()
+  ;(await doc.copyPages(src, src.getPageIndices())).forEach((p) => doc.addPage(p))
+  if (level !== 'less') {
+    doc.setTitle(''); doc.setAuthor(''); doc.setSubject(''); doc.setKeywords([]); doc.setProducer('DocDoctor'); doc.setCreator('DocDoctor')
+  }
+  const bytes = await doc.save({ useObjectStreams: level !== 'less', addDefaultPage: false })
+  return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(bytes) }
+}
+
+export async function addPageNumbers(file: File, position: 'bottom-center' | 'bottom-right' | 'bottom-left', start: number, fmt: string): Promise<OutputFile> {
+  const doc = await load(await file.arrayBuffer())
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  doc.getPages().forEach((page, i) => {
+    const label = fmt.replace('{n}', String(start + i)).replace('{total}', String(doc.getPageCount()))
+    const { width } = page.getSize()
+    const w = font.widthOfTextAtSize(label, 10)
+    const x = position === 'bottom-center' ? (width - w) / 2 : position === 'bottom-right' ? width - w - 36 : 36
+    page.drawText(label, { x, y: 24, size: 10, font, color: rgb(0.35, 0.38, 0.45) })
+  })
+  return { name: `${stem(file.name)}-numbered.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+export async function watermarkPdf(file: File, text: string, opacity: number, size: number): Promise<OutputFile> {
+  const doc = await load(await file.arrayBuffer())
+  const font = await doc.embedFont(StandardFonts.HelveticaBold)
+  for (const page of doc.getPages()) {
+    const { width, height } = page.getSize()
+    page.drawText(text, {
+      x: width / 2 - font.widthOfTextAtSize(text, size) / 2,
+      y: height / 2,
+      size, font, color: rgb(0.45, 0.45, 0.55), opacity, rotate: degrees(-30),
+    })
+  }
+  return { name: `${stem(file.name)}-watermarked.pdf`, blob: pdfBlob(await doc.save()) }
+}
+
+// ── PDF.js rendering (thumbnails + page images) ──────────────────
+async function loadPdfJs(bytes: ArrayBuffer) {
+  const pdfjs = await import('pdfjs-dist')
+  try {
+    const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+    pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+  } catch { /* Node/test runtime: pdf.js resolves its worker itself. */ }
+  return pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise
+}
+
+/** Render one page (1-based) to a JPEG data URL for placement previews. */
+export async function renderPageImage(bytes: ArrayBuffer, pageNum: number, scale = 1.2): Promise<string> {
+  const pdf = await loadPdfJs(bytes.slice(0))
+  const page = await pdf.getPage(Math.min(Math.max(1, pageNum), pdf.numPages))
+  const vp = page.getViewport({ scale })
+  const c = document.createElement('canvas')
+  c.width = vp.width; c.height = vp.height
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
+  await page.render({ canvas: c, viewport: vp }).promise
+  closePdf(pdf)
+  return c.toDataURL('image/jpeg', 0.85)
+}
+
+interface TextItem { str: string; x: number; y: number; w: number }
+
+/** Extract text lines per page (grouped by baseline), for PDF→Word/Excel conversion. */
+export async function extractTextPages(bytes: ArrayBuffer): Promise<{ lines: string[]; rows: string[][] }[]> {
+  const pdf = await loadPdfJs(bytes.slice(0))
+  const pages: { lines: string[]; rows: string[][] }[] = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const tc = await page.getTextContent()
+    const items: TextItem[] = tc.items
+      .filter((it): it is typeof it & { str: string; transform: number[]; width: number } => 'str' in it && typeof (it as { str?: unknown }).str === 'string')
+      .map((it) => ({ str: it.str, x: it.transform[4], y: Math.round(it.transform[5]), w: it.width }))
+      .filter((it) => it.str.length)
+    // Group items into lines by baseline y (top-down), then sort by x.
+    const byLine = new Map<number, TextItem[]>()
+    for (const it of items) {
+      let key = [...byLine.keys()].find((k) => Math.abs(k - it.y) <= 3)
+      if (key === undefined) { key = it.y; byLine.set(key, []) }
+      byLine.get(key)!.push(it)
+    }
+    const sorted = [...byLine.entries()].sort((a, b) => b[0] - a[0])
+      .map(([, its]) => its.sort((a, b) => a.x - b.x))
+    pages.push({
+      lines: sorted.map((its) => its.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean),
+      rows: sorted.map((its) => its.map((i) => i.str.trim()).filter(Boolean)),
+    })
+  }
+  closePdf(pdf)
+  return pages
+}
+
+type PdfDoc = Awaited<ReturnType<typeof loadPdfJs>>
+const closePdf = (pdf: PdfDoc) => { void (pdf as unknown as { destroy?: () => Promise<void> }).destroy?.() }
+
+export async function pdfPageCount(bytes: ArrayBuffer): Promise<number> {
+  const pdf = await loadPdfJs(bytes.slice(0))
+  const n = pdf.numPages
+  closePdf(pdf)
+  return n
+}
+
+export async function renderThumbnails(bytes: ArrayBuffer, scale = 0.35): Promise<string[]> {
+  const pdf = await loadPdfJs(bytes.slice(0))
+  const urls: string[] = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const vp = page.getViewport({ scale })
+    const c = document.createElement('canvas')
+    c.width = vp.width; c.height = vp.height
+    await page.render({ canvas: c, viewport: vp }).promise
+    urls.push(c.toDataURL('image/jpeg', 0.7))
+  }
+  closePdf(pdf)
+  return urls
+}
+
+export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png', scale: number): Promise<OutputFile[]> {
+  const pdf = await loadPdfJs(await file.arrayBuffer())
+  const outs: OutputFile[] = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const vp = page.getViewport({ scale })
+    const c = document.createElement('canvas')
+    c.width = vp.width; c.height = vp.height
+    const ctx = c.getContext('2d')!
+    if (format === 'image/jpeg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height) }
+    await page.render({ canvas: c, viewport: vp }).promise
+    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), format, 0.92))
+    outs.push({ name: `${stem(file.name)}-page-${i}.${format === 'image/jpeg' ? 'jpg' : 'png'}`, blob })
+  }
+  closePdf(pdf)
+  return outs
+}
