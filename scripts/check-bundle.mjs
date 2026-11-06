@@ -21,7 +21,7 @@ if (!existsSync(htmlPath)) {
 const html = readFileSync(htmlPath, 'utf8')
 
 const initial = new Set()
-for (const m of html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/g)) initial.add(m[1])
+for (const m of html.matchAll(/(?:src|href)="[^"]*?(\/assets\/[^"]+\.(?:js|css))"/g)) initial.add(m[1])
 
 // The entry chunk's own static imports also load on first paint (the vendor
 // chunk arrives this way, without a modulepreload link). Follow one level.
