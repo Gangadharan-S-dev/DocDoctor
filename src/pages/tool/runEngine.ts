@@ -35,13 +35,13 @@ export interface RunSettings {
   pdfSize: number
   pdfColor: string
   sigData: string | null
-  signPos: 'bottom-right' | 'bottom-left' | 'center'
+  signPos: 'bottom-right' | 'bottom-left' | 'center' | 'custom'
   pwd: string
   pwd2: string
   blockSel: number[]
   gridValue: number[] | PageOp[]
   ocrLang: string
-  ocrFormat: 'txt' | 'pdf' | 'both'
+  ocrFormat: 'txt' | 'pdf' | 'docx' | 'both'
 }
 
 export interface RunContext {
@@ -53,8 +53,8 @@ export interface RunContext {
 }
 
 const IMAGE_IDS = new Set(['compress-image', 'resize-image', 'crop-image', 'jpg-to-png', 'png-to-jpg', 'webp-converter', 'jpg-to-webp', 'png-to-webp', 'rotate-image', 'flip-image', 'image-watermark', 'image-to-pdf', 'ico-converter', 'image-ocr'])
-const PDF_IDS = new Set(['merge-pdf', 'split-pdf', 'remove-pdf-pages', 'extract-pdf-pages', 'organize-pdf', 'rotate-pdf', 'compress-pdf', 'pdf-page-numbers', 'pdf-watermark', 'pdf-to-jpg', 'pdf-to-image', 'pdf-to-png', 'ocr-pdf'])
-const OFFICE_IDS = new Set(['word-to-txt', 'extract-word-text', 'word-to-html', 'compress-docx', 'merge-word', 'split-word', 'edit-word', 'compress-powerpoint', 'merge-presentations', 'split-presentations', 'remove-slides', 'extract-slides', 'reorder-slides', 'xls-to-xlsx', 'csv-to-excel', 'excel-to-csv', 'merge-excel', 'split-worksheets', 'remove-worksheets', 'compress-excel', 'excel-to-html', 'xlsx-to-pdf', 'excel-to-pdf', 'remove-word-pages'])
+const PDF_IDS = new Set(['merge-pdf', 'split-pdf', 'remove-pdf-pages', 'extract-pdf-pages', 'organize-pdf', 'rotate-pdf', 'compress-pdf', 'pdf-page-numbers', 'pdf-watermark', 'pdf-to-jpg', 'pdf-to-image', 'pdf-to-png', 'ocr-pdf', 'compare-pdf'])
+const OFFICE_IDS = new Set(['word-to-txt', 'extract-word-text', 'word-to-html', 'compress-docx', 'merge-word', 'split-word', 'edit-word', 'compress-powerpoint', 'merge-presentations', 'split-presentations', 'remove-slides', 'extract-slides', 'reorder-slides', 'xls-to-xlsx', 'csv-to-excel', 'excel-to-csv', 'merge-excel', 'split-worksheets', 'remove-worksheets', 'compress-excel', 'excel-to-html', 'xlsx-to-pdf', 'excel-to-pdf', 'remove-word-pages', 'docx-page-remover'])
 const TEXT_IDS = new Set(['zip-files', 'extract-zip', 'html-to-txt', 'txt-converter', 'markdown-converter', 'json-formatter', 'json-to-xml', 'xml-formatter', 'csv-tools'])
 const ADVANCED_IDS = new Set(['edit-pdf', 'sign-pdf', 'repair-pdf', 'pdf-to-word', 'pdf-to-docx', 'pdf-to-excel', 'pdf-to-powerpoint', 'pdf-to-pptx', 'word-to-pdf', 'docx-to-pdf', 'epub-to-pdf'])
 const CRYPTO_IDS = new Set(['protect-pdf', 'unlock-pdf'])
@@ -121,6 +121,7 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'pdf-watermark': return [await PDF.watermarkPdf(f0, s.wmText || 'DocDoctor', s.wmOpacity, 48)]
       case 'pdf-to-jpg': case 'pdf-to-image': return PDF.pdfToImages(f0, 'image/jpeg', s.scale, proc)
       case 'pdf-to-png': return PDF.pdfToImages(f0, 'image/png', s.scale, proc)
+      case 'compare-pdf': return PDF.comparePdfs(fs, proc)
     }
   }
   if (OFFICE_IDS.has(id)) {
@@ -147,7 +148,7 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'compress-excel': return [await OFF.recompressPackage(f0, `${f0.name.replace(/\.xlsx$/i, '')}-compressed.xlsx`, OFF.XLSX_TYPE)]
       case 'excel-to-html': return [await OFF.excelToHtml(f0)]
       case 'xlsx-to-pdf': case 'excel-to-pdf': return [await OFF.excelToPdf(f0)]
-      case 'remove-word-pages': return [await OFF.removeDocxBlocks(f0, s.blockSel)]
+      case 'remove-word-pages': case 'docx-page-remover': return [await OFF.removeDocxPages(f0, s.blockSel)]
     }
   }
   if (TEXT_IDS.has(id)) {
@@ -170,7 +171,8 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'sign-pdf': {
         if (!s.sigData) throw new Error('Draw your signature first.')
         const sigBytes = new Uint8Array(await (await fetch(s.sigData)).arrayBuffer())
-        return [await ADV.signPdf(f0, sigBytes, s.pdfPage, s.signPos)]
+        const pos = s.signPos === 'custom' ? { xPct: s.pdfX, yPct: s.pdfY } : s.signPos
+        return [await ADV.signPdf(f0, sigBytes, s.pdfPage, pos)]
       }
       case 'repair-pdf': return [await ADV.repairPdf(f0)]
       case 'pdf-to-word': case 'pdf-to-docx': return [await ADV.pdfToDocx(f0)]

@@ -42,6 +42,8 @@ check('edit pdf stamps text', (await textOf(edited.blob)).includes('APPROVED 202
 const png1x1 = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'))
 const signed = await ADV.signPdf(pdfFile, png1x1, 1, 'bottom-right')
 check('sign pdf embeds signature', (await PDFDocument.load(await signed.blob.arrayBuffer())).getPageCount() === 1)
+const signedCustom = await ADV.signPdf(pdfFile, png1x1, 1, { xPct: 50, yPct: 50 })
+check('sign pdf custom coords embeds signature', (await PDFDocument.load(await signedCustom.blob.arrayBuffer())).getPageCount() === 1)
 
 const repaired = await ADV.repairPdf(pdfFile)
 check('repair pdf rebuilds valid file', (await textOf(repaired.blob)).includes('Quarterly Report'))

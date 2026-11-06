@@ -62,17 +62,27 @@ export async function editPdfAddText(
 }
 
 // ── Sign PDF: embed a drawn signature PNG ────────────────────────
+export type SignPosition = 'bottom-right' | 'bottom-left' | 'center' | 'custom' | { xPct: number; yPct: number; width?: number }
+
 export async function signPdf(
-  file: File, signaturePng: Uint8Array, pageNum: number, position: 'bottom-right' | 'bottom-left' | 'center',
+  file: File, signaturePng: Uint8Array, pageNum: number, position: SignPosition,
 ): Promise<OutputFile> {
   const doc = await PDFDocument.load(await file.arrayBuffer())
   if (pageNum < 1 || pageNum > doc.getPageCount()) throw new Error(`Page ${pageNum} does not exist (document has ${doc.getPageCount()} pages).`)
   const page = doc.getPage(pageNum - 1)
   const { width, height } = page.getSize()
   const img = await doc.embedPng(signaturePng)
-  const sigW = 170, sigH = (img.height / img.width) * sigW
-  const x = position === 'bottom-left' ? 40 : position === 'center' ? (width - sigW) / 2 : width - sigW - 40
-  const y = position === 'center' ? (height - sigH) / 2 : 40
+  const sigW = (typeof position === 'object' && position.width) ? position.width : 170
+  const sigH = (img.height / img.width) * sigW
+  let x: number
+  let y: number
+  if (typeof position === 'object') {
+    x = Math.max(0, Math.min(width - sigW, (position.xPct / 100) * width - sigW / 2))
+    y = Math.max(0, Math.min(height - sigH, height - (position.yPct / 100) * height - sigH / 2))
+  } else {
+    x = position === 'bottom-left' ? 40 : position === 'center' ? (width - sigW) / 2 : width - sigW - 40
+    y = position === 'center' ? (height - sigH) / 2 : 40
+  }
   page.drawImage(img, { x, y, width: sigW, height: sigH })
   return { name: `${stem(file.name)}-signed.pdf`, blob: pdfBlob(await doc.save()) }
 }
@@ -96,7 +106,7 @@ export async function repairPdf(file: File): Promise<OutputFile> {
 // ── PDF → Word (text-based rebuild; disclosed in UI) ─────────────
 export async function pdfToDocx(file: File): Promise<OutputFile> {
   const pages = await extractTextPages(await file.arrayBuffer())
-  if (!pages.some((p) => p.lines.length)) throw new Error('No selectable text found. Scanned/image PDFs need OCR, which DocDoctor does not run.')
+  if (!pages.some((p) => p.lines.length)) throw new Error('No selectable text found. Scanned or image-only PDFs need OCR — please use the "OCR PDF to Text" tool to extract text or convert to a searchable document.')
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } = await import('docx')
   const children: InstanceType<typeof Paragraph>[] = []
   pages.forEach((p, pi) => {
@@ -115,7 +125,7 @@ export async function pdfToDocx(file: File): Promise<OutputFile> {
 // ── PDF → Excel (line/cell text extraction heuristic) ────────────
 export async function pdfToExcel(file: File): Promise<OutputFile> {
   const pages = await extractTextPages(await file.arrayBuffer())
-  if (!pages.some((p) => p.rows.length)) throw new Error('No selectable text found. Scanned/image PDFs need OCR, which DocDoctor does not run.')
+  if (!pages.some((p) => p.rows.length)) throw new Error('No selectable text found. Scanned or image-only PDFs need OCR — please use the "OCR PDF to Text" tool to extract text or tables.')
   const wb = XLSX.utils.book_new()
   pages.forEach((p, i) => {
     const ws = XLSX.utils.aoa_to_sheet(p.rows.length ? p.rows : [['(no text on this page)']])

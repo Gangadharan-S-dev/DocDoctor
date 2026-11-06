@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react'
-import { CloudUpload, FileUp, X, FileWarning, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { CloudUpload, FileUp, X, FileWarning, Trash2, Clipboard } from 'lucide-react'
 import type { Tool } from '../data/tools'
 import { formatSize } from '../data/tools'
 import { validateFiles, type PickedFile } from '../lib/files'
@@ -23,6 +23,44 @@ export default function UploadArea({ tool, files, onChange }: {
     if (ok.length) onChange([...files, ...ok.map((file) => ({ file, id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 8)}` }))])
   }, [tool, files, onChange])
 
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      const clipboard = e.clipboardData
+      if (!clipboard) return
+
+      const pastedFiles: File[] = []
+      if (clipboard.files && clipboard.files.length > 0) {
+        for (let i = 0; i < clipboard.files.length; i++) {
+          pastedFiles.push(clipboard.files[i])
+        }
+      } else if (clipboard.items && clipboard.items.length > 0) {
+        for (let i = 0; i < clipboard.items.length; i++) {
+          const item = clipboard.items[i]
+          if (item.kind === 'file') {
+            const f = item.getAsFile()
+            if (f) {
+              const ext = f.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+              const named = f.name && f.name !== 'image.png' ? f : new File([f], `pasted-${Date.now()}.${ext}`, { type: f.type || 'image/png' })
+              pastedFiles.push(named)
+            }
+          }
+        }
+      }
+
+      if (pastedFiles.length > 0) {
+        e.preventDefault()
+        add(pastedFiles)
+      }
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [add])
+
   return (
     <div>
       <div
@@ -38,8 +76,15 @@ export default function UploadArea({ tool, files, onChange }: {
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
         <p className="font-display text-lg font-bold text-ink-950">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>
-        <p className="mt-1 text-sm text-slate-500">or browse from your device · Max {tool.maxSizeMB} MB{tool.multiple ? ' · Multiple files supported' : ''}</p>
-        <span className="btn-accent mt-5"><FileUp className="h-4 w-4" /> Browse files</span>
+        <p className="mt-1 text-sm text-slate-500">
+          or browse from your device · paste with <kbd className="rounded bg-slate-200/80 px-1.5 py-0.5 text-xs font-semibold text-slate-700">Ctrl+V</kbd> · Max {tool.maxSizeMB} MB{tool.multiple ? ' · Multiple files supported' : ''}
+        </p>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+          <span className="btn-accent"><FileUp className="h-4 w-4" /> Browse files</span>
+          <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
+            <Clipboard className="h-3.5 w-3.5 text-accent" /> Paste supported
+          </span>
+        </div>
         <input ref={inputRef} type="file" className="hidden" accept={tool.accept === '*' ? undefined : tool.accept} multiple={tool.multiple} onChange={(e) => { if (e.target.files) add(e.target.files); e.target.value = '' }} />
       </div>
 

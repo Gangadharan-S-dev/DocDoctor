@@ -67,6 +67,7 @@ export const TOOLS: Tool[] = [
   T({ id: 'sign-pdf', name: 'Sign PDF', description: 'Draw or type a signature and place it on any page.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Stamp, phase: 4, engine: 'pdf-lib + canvas' }),
   T({ id: 'repair-pdf', name: 'Repair PDF', description: 'Attempt to recover and rebuild damaged PDF files.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Wrench, phase: 4, engine: 'pdf-lib rebuild (browser)' }),
   T({ id: 'ocr-pdf', name: 'OCR PDF to Text', description: 'Recognize text in scanned PDFs with on-device OCR in 13 languages. Download plain text, a searchable PDF, or both.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Eye, phase: 4, engine: 'Tesseract.js OCR (browser)' }),
+  T({ id: 'compare-pdf', name: 'Compare PDFs', description: 'Compare two PDF documents side-by-side to highlight page differences and changes.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: true, icon: ArrowLeftRight, phase: 2, engine: 'PDF.js visual diff (browser)' }),
   // ── Image (Phase 2) ────────────────────────────────────────────
   T({ id: 'compress-image', name: 'Compress Image', description: 'Shrink JPG, PNG and WebP with adjustable quality and batch support.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif,.avif', acceptLabel: 'JPG, PNG, WebP, GIF, AVIF', maxSizeMB: 50, multiple: true, icon: FileArchive, popular: true, phase: 2, engine: 'Canvas (browser)' }),
   T({ id: 'resize-image', name: 'Resize Image', description: 'Set exact width and height, with aspect-ratio lock.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Maximize2, popular: true, phase: 2, engine: 'Canvas (browser)' }),
@@ -87,7 +88,8 @@ export const TOOLS: Tool[] = [
   // ── Word (Phase 3) ─────────────────────────────────────────────
   T({ id: 'docx-to-pdf', name: 'DOCX to PDF', description: 'Convert Word documents to PDF with layout preserved.', category: 'word', accept: '.docx,.doc', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'pdf-to-docx', name: 'PDF to DOCX', description: 'Convert PDFs back to editable Word documents.', category: 'word', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
-  T({ id: 'remove-word-pages', name: 'Remove Word Sections', description: 'Word files have no fixed pages — pagination depends on fonts and layout. Safely remove whole sections, paragraphs or tables by content instead.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Layers, phase: 3, engine: 'DOCX content surgery (browser)' }),
+  T({ id: 'remove-word-pages', name: 'Remove Word Pages', description: 'Remove specific pages or sections from Word documents. Safely deletes pages with page breaks, sections, or paragraphs.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Scissors, phase: 3, engine: 'DOCX page surgery (browser)' }),
+  T({ id: 'docx-page-remover', name: 'DOCX Page Remover', description: 'Delete unwanted pages from Word DOCX files. Select pages visually with page break detection and instant preview.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Scissors, popular: true, phase: 3, engine: 'DOCX page surgery (browser)' }),
   T({ id: 'merge-word', name: 'Merge Word', description: 'Combine several DOCX files into one document.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: true, icon: Merge, phase: 3, engine: 'docx structured merge' }),
   T({ id: 'split-word', name: 'Split Word', description: 'Split a DOCX by sections or heading ranges.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Scissors, phase: 3, engine: 'docx structured split' }),
   T({ id: 'compress-docx', name: 'Compress DOCX', description: 'Recompress embedded media and prune unused parts.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: FileArchive, phase: 3, engine: 'ZIP re-pack + media optimize' }),
@@ -150,9 +152,9 @@ export const IMPLEMENTED_IDS = new Set([
   'edit-pdf', 'sign-pdf', 'repair-pdf', 'pdf-to-word', 'pdf-to-docx', 'pdf-to-excel',
   // Phase 5 — AES-256 encryption (@cantoo/pdf-lib) + safe Word content removal.
   // Server-gated only: pptx-to-pdf + slides-to-images (LibreOffice service).
-  'protect-pdf', 'unlock-pdf', 'remove-word-pages',
+  'protect-pdf', 'unlock-pdf', 'remove-word-pages', 'docx-page-remover',
   'pdf-to-powerpoint', 'pdf-to-pptx', 'word-to-pdf', 'docx-to-pdf', 'epub-to-pdf',
-  'ocr-pdf', 'image-ocr',
+  'ocr-pdf', 'image-ocr', 'compare-pdf',
 ])
 export const isImplemented = (t: Tool) => IMPLEMENTED_IDS.has(t.id)
 

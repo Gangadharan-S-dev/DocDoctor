@@ -89,7 +89,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pdfSize, setPdfSize] = useState(16)
   const [pdfColor, setPdfColor] = useState('#122036')
   const [sigData, setSigData] = useState<string | null>(null)
-  const [signPos, setSignPos] = useState<'bottom-right' | 'bottom-left' | 'center'>('bottom-right')
+  const [signPos, setSignPos] = useState<'bottom-right' | 'bottom-left' | 'center' | 'custom'>('bottom-right')
   const [serverOk, setServerOk] = useState<boolean | null>(null)
   const [compressorOk, setCompressorOk] = useState<boolean | null>(null)
   const [compressorName, setCompressorName] = useState<string | null>(null)
@@ -98,7 +98,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pwd2, setPwd2] = useState('')
   const [blockSel, setBlockSel] = useState<number[]>([])
   const [ocrLang, setOcrLang] = useState('eng')
-  const [ocrFormat, setOcrFormat] = useState<'txt' | 'pdf' | 'both'>('txt')
+  const [ocrFormat, setOcrFormat] = useState<'txt' | 'pdf' | 'docx' | 'both'>('txt')
   const [previewText, setPreviewText] = useState('')
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [fav, setFav] = useState(() => isFavorite(tool.id))
@@ -296,20 +296,32 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         {first && tool.id === 'edit-pdf' && (
           <div className="mt-6 border-t border-slate-100 pt-5">
             <p className="mb-3 text-sm font-bold text-ink-950">Click the page to place your text</p>
-            <Suspense fallback={<PickerFallback />}><PagePlacement file={first} page={pdfPage} x={pdfX} y={pdfY} onPick={(x, y) => { setPdfX(x); setPdfY(y) }} /></Suspense>
+            <Suspense fallback={<PickerFallback />}>
+              <PagePlacement file={first} page={pdfPage} x={pdfX} y={pdfY} onPick={(x, y) => { setPdfX(x); setPdfY(y) }} stampText={pdfText || 'Text here'} textColor={pdfColor} textSize={pdfSize} />
+            </Suspense>
           </div>
         )}
         {first && tool.id === 'sign-pdf' && (
-          <div className="mt-6 border-t border-slate-100 pt-5">
-            <p className="mb-3 text-sm font-bold text-ink-950">Draw your signature</p>
-            <Suspense fallback={<PickerFallback />}><SignaturePad onChange={setSigData} /></Suspense>
+          <div className="mt-6 border-t border-slate-100 pt-5 space-y-6">
+            <div>
+              <p className="mb-3 text-sm font-bold text-ink-950">Draw your signature</p>
+              <Suspense fallback={<PickerFallback />}><SignaturePad onChange={setSigData} /></Suspense>
+            </div>
+            {sigData && (
+              <div className="border-t border-slate-100 pt-5">
+                <p className="mb-3 text-sm font-bold text-ink-950">Click on the page to place your signature</p>
+                <Suspense fallback={<PickerFallback />}>
+                  <PagePlacement file={first} page={pdfPage} x={pdfX} y={pdfY} onPick={(x, y) => { setPdfX(x); setPdfY(y); setSignPos('custom') }} stampPreview={sigData} />
+                </Suspense>
+              </div>
+            )}
           </div>
         )}
 
-        {first && tool.id === 'remove-word-pages' && (
+        {first && (tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && (
           <div className="mt-6 border-t border-slate-100 pt-5">
-            <p className="mb-1.5 text-sm font-bold text-ink-950">Select content to remove</p>
-            <p className="mb-4 text-xs font-semibold text-amber-700">DOCX files don&apos;t have fixed pages — pagination changes with fonts and printers. Instead of guessing page boundaries, remove whole sections or blocks below; everything else stays untouched.</p>
+            <p className="mb-1.5 text-sm font-bold text-ink-950">Select pages or sections to remove</p>
+            <p className="mb-4 text-xs font-semibold text-slate-500">Pick pages visually or enter page ranges to remove from your Word document. Content is safely removed without affecting remaining styles.</p>
             <Suspense fallback={<PickerFallback />}><DocxBlockPicker file={first} onChange={setBlockSel} /></Suspense>
           </div>
         )}
@@ -356,7 +368,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {(tool.id === 'ocr-pdf' || tool.id === 'image-ocr') && (
               <div className="grid gap-4 sm:grid-cols-2">
                 {sel('OCR language', ocrLang, setOcrLang, OCR_LANGUAGES.map((l) => [l.code, l.label] as [string, string]))}
-                {sel('Output', ocrFormat, setOcrFormat, [['txt', 'Plain text (.txt)'], ['pdf', 'Searchable PDF'], ['both', 'Both text + searchable PDF']])}
+                {sel('Output', ocrFormat, setOcrFormat as never, [['txt', 'Plain text (.txt)'], ['pdf', 'Searchable PDF'], ['docx', 'Editable Word document (.docx)'], ['both', 'Both text + searchable PDF']])}
                 <p className="text-xs font-semibold text-slate-500 sm:col-span-2">OCR runs entirely on your device. The first run downloads the selected language model (a few MB) once and caches it; your file itself is never uploaded. Searchable PDFs carry an invisible text layer over the page image — best for Latin scripts; other scripts are fully included in the text output. Best results on clean, high-contrast scans.</p>
               </div>
             )}
@@ -382,15 +394,25 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {tool.id === 'sign-pdf' && (
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block"><span className="mb-1.5 block text-sm font-bold">Page (1-based)</span><input type="number" min={1} value={pdfPage} onChange={(e) => setPdfPage(Math.max(1, +e.target.value || 1))} className="input" /></label>
-                {sel('Signature position', signPos, setSignPos, [['bottom-right', 'Bottom right'], ['bottom-left', 'Bottom left'], ['center', 'Center']])}
+                {sel('Signature position', signPos, setSignPos as never, [
+                  ['custom', 'Custom placement (click on page above)'],
+                  ['bottom-right', 'Bottom right'],
+                  ['bottom-left', 'Bottom left'],
+                  ['center', 'Center'],
+                ])}
+                <p className="text-xs text-slate-500 sm:col-span-2">
+                  {signPos === 'custom' ? `Signature placed at ${pdfX}% across, ${pdfY}% down on page ${pdfPage}. Click the preview above to reposition.` : `Using ${signPos.replace('-', ' ')} preset position.`}
+                </p>
               </div>
             )}
             {(tool.id === 'pdf-to-powerpoint' || tool.id === 'pdf-to-pptx') && <div>{sel('Slide image quality', String(scale), (v: string) => setScale(+v), [['1', 'Standard (72 dpi)'], ['2', 'High (144 dpi)'], ['3', 'Print (216 dpi)']])}<p className="mt-2 text-xs text-slate-500">Each PDF page becomes a full-slide image — text inside slides is not editable. For editable text, use PDF to Word instead.</p></div>}
+            {tool.id === 'compare-pdf' && <p className="text-xs font-semibold text-slate-500">Upload two PDF documents to compare them side-by-side. DocDoctor generates a split-view comparison document showing page-by-page differences along with a text match summary.</p>}
             {tool.id === 'repair-pdf' && <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the document structure. Files that cannot be opened at all (truncated, heavily corrupted) cannot be repaired — you&apos;ll get a clear error instead of a fake success.</p>}
             {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Text-based conversion: selectable text is rebuilt as an editable document. Original layout, columns and images are simplified; scanned PDFs need OCR (not run here).</p>}
             {tool.id === 'pdf-to-excel' && <p className="text-xs font-semibold text-slate-500">Extracts selectable text into spreadsheet rows, one sheet per page. Borderless tables and scanned PDFs may not align perfectly — check the result.</p>}
             {(tool.id === 'word-to-pdf' || tool.id === 'docx-to-pdf') && <p className="text-xs font-semibold text-amber-700">Text-flow PDF: content is re-typeset cleanly — original fonts, page breaks and images from the DOCX are not preserved. Use it for readable/printable output, not archival fidelity.</p>}
             {tool.id === 'epub-to-pdf' && <p className="text-xs font-semibold text-slate-500">Chapter text is extracted in reading order and flowed into a clean PDF. Book styling and images are not carried over.</p>}
+            {(tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && <p className="text-xs font-semibold text-slate-500">Selected pages and sections will be removed from the DOCX file while preserving all other styles, headers, footers and tables.</p>}
             {tool.id === 'protect-pdf' && (
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block"><span className="mb-1.5 block text-sm font-bold">Password (min 4 characters)</span><input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} className="input" autoComplete="new-password" placeholder="Choose a password" /></label>

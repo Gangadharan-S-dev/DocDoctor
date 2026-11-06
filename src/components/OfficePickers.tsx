@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ArrowUp, ArrowDown } from 'lucide-react'
-import { listSlides, sheetNames, listDocxBlocks, type SlideInfo, type DocxBlock } from '../processing/office'
+import { listSlides, sheetNames, listDocxBlocks, listDocxPages, type SlideInfo, type DocxBlock, type DocxPageInfo } from '../processing/office'
 
 function useLoader<T>(load: () => Promise<T>, dep: File) {
   const [result, setResult] = useState<{ dep: File; data: T | null; error: string }>({ dep, data: null, error: '' })
@@ -80,30 +80,185 @@ export function SlideReorder({ file, onChange }: { file: File; onChange: (parts:
   )
 }
 
-/** Checkbox picker over a DOCX's content blocks (headings, paragraphs, tables). Emits block indexes. */
+/** Checkbox picker over a DOCX's pages and content blocks. Emits block indexes to remove. */
 export function DocxBlockPicker({ file, onChange }: { file: File; onChange: (indexes: number[]) => void }) {
-  const { data: blocks, error } = useLoader<DocxBlock[]>(() => listDocxBlocks(file), file)
-  const { sel, toggle } = useFileSelection<number>(file)
-  useEffect(() => { onChange([...sel].sort((a, b) => a - b)) }, [sel]) // eslint-disable-line
+  const { data: pages, error: pageErr } = useLoader<DocxPageInfo[]>(() => listDocxPages(file), file)
+  const { data: blocks, error: blockErr } = useLoader<DocxBlock[]>(() => listDocxBlocks(file), file)
+  const [viewMode, setViewMode] = useState<'pages' | 'blocks'>('pages')
+  const [selPages, setSelPages] = useState<Set<number>>(new Set())
+  const [selBlocks, setSelBlocks] = useState<Set<number>>(new Set())
+  const [rangeInput, setRangeInput] = useState('')
+
+  useEffect(() => {
+    if (viewMode === 'pages') {
+      if (!pages) return
+      const doomedBlocks = new Set<number>()
+      for (const p of pages) {
+        if (selPages.has(p.pageNumber)) {
+          p.blockIndices.forEach((idx) => doomedBlocks.add(idx))
+        }
+      }
+      onChange([...doomedBlocks].sort((a, b) => a - b))
+    } else {
+      onChange([...selBlocks].sort((a, b) => a - b))
+    }
+  }, [viewMode, selPages, selBlocks, pages, onChange])
+
+  const togglePage = (pageNum: number) => {
+    setSelPages((prev) => {
+      const next = new Set(prev)
+      if (next.has(pageNum)) next.delete(pageNum); else next.add(pageNum)
+      return next
+    })
+  }
+
+  const toggleBlock = (blockIdx: number) => {
+    setSelBlocks((prev) => {
+      const next = new Set(prev)
+      if (next.has(blockIdx)) next.delete(blockIdx); else next.add(blockIdx)
+      return next
+    })
+  }
+
+  const applyRange = (input: string) => {
+    setRangeInput(input)
+    if (!pages) return
+    const next = new Set<number>()
+    const parts = input.split(',').map((s) => s.trim()).filter(Boolean)
+    for (const p of parts) {
+      const m = p.match(/^(\d+)\s*-\s*(\d+)$/)
+      if (m) {
+        let a = parseInt(m[1]), b = parseInt(m[2])
+        if (a > b) [a, b] = [b, a]
+        for (let i = a; i <= b; i++) if (i >= 1 && i <= pages.length) next.add(i)
+      } else if (/^\d+$/.test(p)) {
+        const num = parseInt(p)
+        if (num >= 1 && num <= pages.length) next.add(num)
+      }
+    }
+    setSelPages(next)
+  }
+
+  const error = pageErr || blockErr
   if (error) return <Err msg={error} />
-  if (!blocks) return <Loading label="Reading document content…" />
+  if (!pages || !blocks) return <Loading label="Analyzing document pages and content…" />
+
   return (
-    <div>
-      <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {blocks.length} content blocks selected for removal</p>
-      <ul className="space-y-2">
-        {blocks.map((b) => (
-          <li key={b.index}>
-            <label className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${sel.has(b.index) ? 'border-red-300 bg-red-50/60 ring-2 ring-red-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-              <input type="checkbox" checked={sel.has(b.index)} onChange={() => toggle(b.index)} className="h-4 w-4 shrink-0 accent-[#E5484D]" />
-              <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-extrabold uppercase tracking-wide ${b.kind === 'heading' ? 'bg-blue-50 text-blue-700' : b.kind === 'table' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{b.kind}</span>
-              <span className="min-w-0 truncate text-sm font-bold text-ink-950" title={b.label}>{b.label}</span>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setViewMode('pages')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+              viewMode === 'pages' ? 'bg-accent text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Pages view ({pages.length} page{pages.length === 1 ? '' : 's'})
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('blocks')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+              viewMode === 'blocks' ? 'bg-accent text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Sections view ({blocks.length} blocks)
+          </button>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          {viewMode === 'pages' ? (
+            <>
+              <button type="button" onClick={() => setSelPages(new Set(pages.map((p) => p.pageNumber)))} className="font-bold text-accent hover:underline">Select all</button>
+              <span className="text-slate-300">|</span>
+              <button type="button" onClick={() => { setSelPages(new Set()); setRangeInput('') }} className="font-bold text-accent hover:underline">Clear</button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => setSelBlocks(new Set(blocks.map((b) => b.index)))} className="font-bold text-accent hover:underline">Select all</button>
+              <span className="text-slate-300">|</span>
+              <button type="button" onClick={() => setSelBlocks(new Set())} className="font-bold text-accent hover:underline">Clear</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {viewMode === 'pages' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex flex-1 items-center gap-2">
+              <span className="text-xs font-bold text-slate-600 shrink-0">Enter page numbers to remove:</span>
+              <input
+                type="text"
+                value={rangeInput}
+                onChange={(e) => applyRange(e.target.value)}
+                placeholder="e.g. 2, 4 or 2-3"
+                className="input !py-1.5 text-xs font-mono max-w-xs"
+              />
             </label>
-          </li>
-        ))}
-      </ul>
+            <span className="text-xs font-semibold text-slate-500">
+              {selPages.size} of {pages.length} pages selected for removal
+            </span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {pages.map((p) => {
+              const isSelected = selPages.has(p.pageNumber)
+              return (
+                <label
+                  key={p.pageNumber}
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition ${
+                    isSelected ? 'border-red-300 bg-red-50/70 ring-2 ring-red-100' : 'border-slate-200 bg-white hover:border-slate-300 shadow-sm'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => togglePage(p.pageNumber)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#E5484D]"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-extrabold text-ink-950">Page {p.pageNumber}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{p.wordCount} words</span>
+                        {p.hasExplicitBreak && (
+                          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">Break</span>
+                        )}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-600" title={p.label}>
+                      {p.label}
+                    </p>
+                  </div>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {viewMode === 'blocks' && (
+        <div>
+          <p className="mb-2 text-xs font-semibold text-slate-500">{selBlocks.size} of {blocks.length} content blocks selected</p>
+          <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">
+            {blocks.map((b) => (
+              <li key={b.index}>
+                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-xs transition ${selBlocks.has(b.index) ? 'border-red-300 bg-red-50/60 ring-2 ring-red-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                  <input type="checkbox" checked={selBlocks.has(b.index)} onChange={() => toggleBlock(b.index)} className="h-4 w-4 shrink-0 accent-[#E5484D]" />
+                  <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold uppercase ${b.kind === 'heading' ? 'bg-blue-50 text-blue-700' : b.kind === 'table' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{b.kind}</span>
+                  <span className="min-w-0 truncate font-semibold text-ink-950" title={b.label}>{b.label}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
+
+export const DocxPagePicker = DocxBlockPicker
 
 /** Checkbox worksheet picker. Emits selected sheet names. */
 export function SheetPicker({ file, onChange }: { file: File; onChange: (names: string[]) => void }) {

@@ -19,7 +19,7 @@ export type { OcrLanguage } from './ocr-languages'
  * are skipped in the PDF layer — their plain-text output is unaffected.
  */
 
-export type OcrFormat = 'txt' | 'pdf' | 'both'
+export type OcrFormat = 'txt' | 'pdf' | 'docx' | 'both'
 
 export interface OcrOpts extends ProcessOpts {
   /** Tesseract language code (see OCR_LANGUAGES). Default 'eng'. */
@@ -133,12 +133,16 @@ const txtOut = (file: File, text: string): OutputFile =>
 const pdfOut = (file: File, bytes: Uint8Array): OutputFile =>
   ({ name: `${stem(file.name)}-searchable.pdf`, blob: new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' }) })
 
-function pickOutputs(format: OcrFormat, file: File, text: string, pdfBytes: Uint8Array | null): OutputFile[] {
+async function pickOutputs(format: OcrFormat, file: File, text: string, pdfBytes: Uint8Array | null): Promise<OutputFile[]> {
   const outs: OutputFile[] = []
   if (format === 'txt' || format === 'both') outs.push(txtOut(file, text))
   if (format === 'pdf' || format === 'both') {
     if (!pdfBytes) throw new Error('Could not build the searchable PDF for this file.')
     outs.push(pdfOut(file, pdfBytes))
+  }
+  if (format === 'docx') {
+    const { textToDocx } = await import('./office')
+    outs.push(await textToDocx(text, `${stem(file.name)}-ocr.docx`))
   }
   return outs
 }
@@ -166,7 +170,7 @@ export async function ocrPdf(file: File, opts: OcrOpts = {}): Promise<OutputFile
     }
     const text = joinOcrPages(texts)
     if (!text) throw new Error('No text could be recognized in this PDF. It may be blank, handwritten, or too low-resolution.')
-    const pdfBytes = format === 'txt' ? null : await buildSearchablePdf(pages, `${stem(file.name)} (OCR)`)
+    const pdfBytes = (format === 'txt' || format === 'docx') ? null : await buildSearchablePdf(pages, `${stem(file.name)} (OCR)`)
     return pickOutputs(format, file, text, pdfBytes)
   } finally {
     await worker.terminate().catch(() => {})
@@ -184,7 +188,7 @@ export async function ocrImage(file: File, opts: OcrOpts = {}): Promise<OutputFi
     const text = data.text.trim()
     if (!text) throw new Error('No text could be recognized in this image. Try a sharper, higher-contrast image.')
     let pdfBytes: Uint8Array | null = null
-    if (format !== 'txt') {
+    if (format === 'pdf' || format === 'both') {
       // Rebuild the source image as a one-page searchable PDF.
       const bmp = await createImageBitmap(file)
       try {

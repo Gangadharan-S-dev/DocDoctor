@@ -17,10 +17,10 @@ Stack: React 19, React Router 8, Vite 8 (Rolldown), Tailwind CSS 4, TypeScript 5
 Processing runs in the browser; image compression batches run in a Web Worker
 with a main-thread fallback, and OCR (Tesseract.js) runs in its own worker.
 
-## Live tools (75 in browser + 2 via the LibreOffice service = all 77 covered)
+## Live tools (76 in browser + 2 via the LibreOffice service = all 78 covered)
 
 - **Image (15):** Compress, Resize, Crop, JPG↔PNG, WebP Converter, JPG/PNG→WebP, Rotate, Flip, Image→PDF, PDF→Image, Watermark, Metadata Viewer, ICO Converter
-- **PDF (12):** Compress, Merge, Split, Remove/Extract/Organize pages (visual grid), Rotate, PDF→JPG/PNG, Page Numbers, Watermark
+- **PDF (13):** Compress, Merge, Split, Compare PDFs, Remove/Extract/Organize pages (visual drag-and-drop grid), Rotate, PDF→JPG/PNG, Page Numbers, Watermark
 - **Word (7):** Word→TXT, Word→HTML, Extract Text, Compress DOCX, Merge Word, Split Word (by heading/paragraphs), Edit Word (text editor → rebuilt DOCX)
 - **PowerPoint (6):** Compress, Merge, Split, Remove/Extract/Reorder slides (visual pickers)
 - **Excel (10):** XLS→XLSX, CSV→Excel, Excel→CSV, Merge, Split Worksheets, Remove Worksheets, Compress, Excel→HTML, XLSX/Excel→PDF (values-only)
@@ -52,6 +52,11 @@ DOCX has no fixed pages, so instead of faking page removal it removes selected
 sections/paragraphs/tables by content. PPTX→PDF and Slides→Images run through
 the optional LibreOffice service below and stay clearly marked unavailable
 until it is connected. Files never leave the device for all browser tools.
+
+Recent upgrades added: **Compare PDFs** (visual side-by-side split view & diff report),
+**Clipboard Paste (`Ctrl+V`)** across all upload dropzones, **drag-and-drop page reordering**
+in Organize PDF, **free visual signature placement** with live page preview & zoom controls,
+**DOCX export from OCR**, non-blocking PDF rasterization, and offline asset caching.
 
 > Windows sandbox note: if npm hits a cache `EPERM`, run with a project-local cache:
 > `npm install --cache .npm-cache`

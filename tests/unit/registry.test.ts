@@ -26,4 +26,16 @@ describe('tool registry integrity', () => {
     expect(IMPLEMENTED_IDS.has('ocr-pdf')).toBe(true)
     expect(IMPLEMENTED_IDS.has('image-ocr')).toBe(true)
   })
+
+  it('Compare PDFs tool is registered and live', () => {
+    expect(toolById('compare-pdf')).toBeDefined()
+    expect(IMPLEMENTED_IDS.has('compare-pdf')).toBe(true)
+  })
+
+  it('DOCX page remover tools are registered and live', () => {
+    expect(toolById('docx-page-remover')).toBeDefined()
+    expect(toolById('remove-word-pages')).toBeDefined()
+    expect(IMPLEMENTED_IDS.has('docx-page-remover')).toBe(true)
+    expect(IMPLEMENTED_IDS.has('remove-word-pages')).toBe(true)
+  })
 })

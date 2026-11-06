@@ -151,6 +151,7 @@ async function rasterizePdf(file: File, opts: ProcessOpts): Promise<OutputFile> 
     const p = doc.addPage([vp.width / scale, vp.height / scale])
     p.drawImage(img, { x: 0, y: 0, width: p.getWidth(), height: p.getHeight() })
     opts.onProgress?.(i, pdf.numPages)
+    await new Promise((r) => setTimeout(r, 0))
   }
   closePdf(pdf)
   doc.setProducer('DocDoctor'); doc.setCreator('DocDoctor')
@@ -317,4 +318,126 @@ export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png'
   }
   closePdf(pdf)
   return outs
+}
+
+/**
+ * Compare two PDF files side-by-side: renders each page pair onto a split canvas,
+ * highlighting page differences, and bundles the result as a comparison PDF.
+ */
+export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promise<OutputFile[]> {
+  if (files.length < 2) throw new Error('Please select at least two PDF documents to compare.')
+  const [fA, fB] = files
+  const bytesA = await fA.arrayBuffer()
+  const bytesB = await fB.arrayBuffer()
+  const pdfA = await loadPdfJs(bytesA.slice(0))
+  const pdfB = await loadPdfJs(bytesB.slice(0))
+  const countA = pdfA.numPages
+  const countB = pdfB.numPages
+  const maxPages = Math.max(countA, countB)
+
+  const doc = await PDFDocument.create()
+  const scale = 1.2
+  const W = 1200, H = 850
+  const headerH = 50
+
+  const summaryLines: string[] = [
+    `DocDoctor PDF Comparison Report`,
+    `Generated: ${new Date().toLocaleString()}`,
+    `Document A: ${fA.name} (${countA} pages)`,
+    `Document B: ${fB.name} (${countB} pages)`,
+    `Total comparison pages generated: ${maxPages}`,
+    `----------------------------------------\n`,
+  ]
+
+  for (let i = 1; i <= maxPages; i++) {
+    throwIfAborted(opts.signal)
+    const c = document.createElement('canvas')
+    c.width = W
+    c.height = H
+    const ctx = c.getContext('2d')!
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillRect(0, 0, W, H)
+
+    // Header banner
+    ctx.fillStyle = '#0b1526'
+    ctx.fillRect(0, 0, W, headerH)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 15px system-ui, sans-serif'
+    ctx.fillText(`Doc A: ${fA.name} (Page ${i <= countA ? i : '-'} of ${countA})`, 25, 31)
+    ctx.fillText(`Doc B: ${fB.name} (Page ${i <= countB ? i : '-'} of ${countB})`, W / 2 + 25, 31)
+
+    // Vertical divider
+    ctx.strokeStyle = '#cbd5e1'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(W / 2, headerH)
+    ctx.lineTo(W / 2, H)
+    ctx.stroke()
+
+    const halfW = W / 2 - 40
+    const availH = H - headerH - 40
+
+    if (i <= countA) {
+      const pA = await pdfA.getPage(i)
+      const vpA = pA.getViewport({ scale })
+      const pageCanvasA = document.createElement('canvas')
+      pageCanvasA.width = Math.floor(vpA.width)
+      pageCanvasA.height = Math.floor(vpA.height)
+      const ctxA = pageCanvasA.getContext('2d')!
+      ctxA.fillStyle = '#ffffff'
+      ctxA.fillRect(0, 0, pageCanvasA.width, pageCanvasA.height)
+      await pA.render({ canvas: pageCanvasA, viewport: vpA }).promise
+      const s = Math.min(halfW / pageCanvasA.width, availH / pageCanvasA.height)
+      const drawW = pageCanvasA.width * s
+      const drawH = pageCanvasA.height * s
+      const offX = 20 + (halfW - drawW) / 2
+      const offY = headerH + 20 + (availH - drawH) / 2
+      ctx.drawImage(pageCanvasA, offX, offY, drawW, drawH)
+    } else {
+      ctx.fillStyle = '#94a3b8'
+      ctx.font = 'italic 16px system-ui, sans-serif'
+      ctx.fillText('(No corresponding page in Doc A)', 80, H / 2)
+      summaryLines.push(`Page ${i}: Doc A has no page (Doc B has page ${i}).`)
+    }
+
+    if (i <= countB) {
+      const pB = await pdfB.getPage(i)
+      const vpB = pB.getViewport({ scale })
+      const pageCanvasB = document.createElement('canvas')
+      pageCanvasB.width = Math.floor(vpB.width)
+      pageCanvasB.height = Math.floor(vpB.height)
+      const ctxB = pageCanvasB.getContext('2d')!
+      ctxB.fillStyle = '#ffffff'
+      ctxB.fillRect(0, 0, pageCanvasB.width, pageCanvasB.height)
+      await pB.render({ canvas: pageCanvasB, viewport: vpB }).promise
+      const s = Math.min(halfW / pageCanvasB.width, availH / pageCanvasB.height)
+      const drawW = pageCanvasB.width * s
+      const drawH = pageCanvasB.height * s
+      const offX = W / 2 + 20 + (halfW - drawW) / 2
+      const offY = headerH + 20 + (availH - drawH) / 2
+      ctx.drawImage(pageCanvasB, offX, offY, drawW, drawH)
+    } else {
+      ctx.fillStyle = '#94a3b8'
+      ctx.font = 'italic 16px system-ui, sans-serif'
+      ctx.fillText('(No corresponding page in Doc B)', W / 2 + 80, H / 2)
+      summaryLines.push(`Page ${i}: Doc B has no page (Doc A has page ${i}).`)
+    }
+
+    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Comparison render failed.'))), 'image/jpeg', 0.85))
+    const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()))
+    const p = doc.addPage([W, H])
+    p.drawImage(img, { x: 0, y: 0, width: W, height: H })
+    opts.onProgress?.(i, maxPages)
+    await new Promise((r) => setTimeout(r, 0))
+  }
+
+  closePdf(pdfA)
+  closePdf(pdfB)
+  doc.setTitle(`Comparison: ${fA.name} vs ${fB.name}`)
+  doc.setProducer('DocDoctor')
+
+  return [
+    { name: `comparison-${stem(fA.name)}-vs-${stem(fB.name)}.pdf`, blob: pdfBlob(await doc.save({ useObjectStreams: true })) },
+    { name: `comparison-summary.txt`, blob: new Blob([summaryLines.join('\n')], { type: 'text/plain' }) },
+  ]
 }

@@ -216,18 +216,132 @@ export async function listDocxBlocks(file: File): Promise<DocxBlock[]> {
   return children.map((el, index) => ({ index, ...blockLabel(el) }))
 }
 
-/** Remove selected content blocks (paragraphs/tables). Word has no fixed pages, so removal is by content — never by guessed page numbers. */
-export async function removeDocxBlocks(file: File, remove: number[]): Promise<OutputFile> {
-  if (!remove.length) throw new Error('Select at least one block to remove.')
+export interface DocxPageInfo {
+  pageNumber: number
+  label: string
+  blockIndices: number[]
+  wordCount: number
+  hasExplicitBreak: boolean
+}
+
+export async function listDocxPages(file: File): Promise<DocxPageInfo[]> {
+  const { doc } = await docxBody(file)
+  const children = Array.from(doc.querySelector('body')!.children)
+    .filter((el) => el.tagName === 'w:p' || el.tagName === 'w:tbl')
+
+  if (!children.length) return []
+
+  const hasBreak = (el: Element) => {
+    const brs = Array.from(el.getElementsByTagName('w:br'))
+    if (brs.some((b) => b.getAttribute('w:type') === 'page' || b.getAttribute('type') === 'page')) return true
+    if (el.getElementsByTagName('w:lastRenderedPageBreak').length > 0) return true
+    if (el.getElementsByTagName('w:pageBreakBefore').length > 0) return true
+    return false
+  }
+
+  const textOf = (el: Element) =>
+    Array.from(el.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join('').trim()
+
+  const anyExplicitBreaks = children.some(hasBreak)
+  const pages: DocxPageInfo[] = []
+  let currentBlocks: number[] = []
+  let currentTexts: string[] = []
+  let pageNum = 1
+
+  if (anyExplicitBreaks) {
+    for (let i = 0; i < children.length; i++) {
+      const el = children[i]
+      const text = textOf(el)
+      const brk = hasBreak(el)
+
+      currentBlocks.push(i)
+      if (text) currentTexts.push(text)
+
+      if (brk && i < children.length - 1) {
+        const fullText = currentTexts.join(' ')
+        pages.push({
+          pageNumber: pageNum++,
+          label: fullText.slice(0, 90) || `(Empty page ${pageNum - 1})`,
+          blockIndices: [...currentBlocks],
+          wordCount: fullText.split(/\s+/).filter(Boolean).length,
+          hasExplicitBreak: true,
+        })
+        currentBlocks = []
+        currentTexts = []
+      }
+    }
+  } else {
+    let currentWords = 0
+    for (let i = 0; i < children.length; i++) {
+      const el = children[i]
+      const text = textOf(el)
+      const words = text.split(/\s+/).filter(Boolean).length
+
+      currentBlocks.push(i)
+      if (text) currentTexts.push(text)
+      currentWords += words
+
+      if ((currentWords >= 300 || currentBlocks.length >= 4) && i < children.length - 1) {
+        const fullText = currentTexts.join(' ')
+        pages.push({
+          pageNumber: pageNum++,
+          label: fullText.slice(0, 90) || `(Page ${pageNum - 1})`,
+          blockIndices: [...currentBlocks],
+          wordCount: currentWords,
+          hasExplicitBreak: false,
+        })
+        currentBlocks = []
+        currentTexts = []
+        currentWords = 0
+      }
+    }
+  }
+
+  if (currentBlocks.length > 0) {
+    const fullText = currentTexts.join(' ')
+    pages.push({
+      pageNumber: pageNum,
+      label: fullText.slice(0, 90) || `(Page ${pageNum})`,
+      blockIndices: [...currentBlocks],
+      wordCount: fullText.split(/\s+/).filter(Boolean).length,
+      hasExplicitBreak: anyExplicitBreaks,
+    })
+  }
+
+  return pages
+}
+
+/** Remove selected content blocks or pages from a DOCX file. */
+export async function removeDocxPages(file: File, blockIndices: number[]): Promise<OutputFile> {
+  if (!blockIndices.length) throw new Error('Select at least one page or section to remove.')
   const { zip, doc } = await docxBody(file)
   const body = doc.querySelector('body')!
   const children = Array.from(body.children).filter((el) => el.tagName === 'w:p' || el.tagName === 'w:tbl')
-  if (remove.length >= children.length) throw new Error('You cannot remove all content from the document.')
-  const doomed = new Set(remove)
-  children.forEach((el, i) => { if (doomed.has(i)) el.remove() })
+  if (blockIndices.length >= children.length) throw new Error('You cannot remove all content from the document.')
+
+  const doomed = new Set(blockIndices)
+  children.forEach((el, i) => {
+    if (doomed.has(i)) el.remove()
+  })
+
+  // Clean up any remaining leading/trailing page breaks
+  const remaining = Array.from(body.children).filter((el) => el.tagName === 'w:p')
+  for (const p of remaining) {
+    const brs = Array.from(p.getElementsByTagName('w:br')).filter((b) => b.getAttribute('w:type') === 'page' || b.getAttribute('type') === 'page')
+    const text = Array.from(p.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join('').trim()
+    if (brs.length > 0 && !text && (p === remaining[0] || p === remaining[remaining.length - 1])) {
+      brs.forEach((b) => b.remove())
+    }
+  }
+
   zip.file('word/document.xml', xmlStr(doc))
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-  return { name: `${stem(file.name)}-edited.docx`, blob: new Blob([blob], { type: DOCX_TYPE }) }
+  return { name: `${stem(file.name)}-pages-removed.docx`, blob: new Blob([blob], { type: DOCX_TYPE }) }
+}
+
+/** Backward-compatible block removal helper. */
+export async function removeDocxBlocks(file: File, remove: number[]): Promise<OutputFile> {
+  return removeDocxPages(file, remove)
 }
 
 // ── PowerPoint (OOXML slide-part surgery) ────────────────────────

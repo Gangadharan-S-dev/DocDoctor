@@ -73,5 +73,10 @@ const editedText = await OFF.wordExtractText(asFile(edited.blob, 'e.docx', OFF.D
 check('removed section gone, kept content intact', editedText.includes('Keep this paragraph.') && !editedText.includes('Delete this paragraph.'))
 await expectThrow('removing all blocks refused', () => OFF.removeDocxBlocks(docxFile, [0, 1, 2, 3]), /cannot remove all/)
 
+const docxPages = await OFF.listDocxPages(docxFile)
+check('docx pages listed with page numbers', docxPages.length >= 1 && docxPages[0].pageNumber === 1)
+const removedPages = await OFF.removeDocxPages(docxFile, [2, 3])
+check('remove docx pages produces valid docx', (await OFF.wordExtractText(asFile(removedPages.blob, 'p.docx', OFF.DOCX_TYPE))).includes('Keep this paragraph.'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
