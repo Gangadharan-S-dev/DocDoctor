@@ -3,16 +3,30 @@ import { Loader2, ArrowUp, ArrowDown } from 'lucide-react'
 import { listSlides, sheetNames, listDocxBlocks, type SlideInfo, type DocxBlock } from '../processing/office'
 
 function useLoader<T>(load: () => Promise<T>, dep: File) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
+  const [result, setResult] = useState<{ dep: File; data: T | null; error: string }>({ dep, data: null, error: '' })
   useEffect(() => {
     let alive = true
-    setData(null); setError('')
-    load().then((d) => { if (alive) setData(d) }).catch(() => { if (alive) setError('Could not read this file — it may be damaged or in an unsupported variant.') })
+    load()
+      .then((d) => { if (alive) setResult({ dep, data: d, error: '' }) })
+      .catch(() => { if (alive) setResult({ dep, data: null, error: 'Could not read this file — it may be damaged or in an unsupported variant.' }) })
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dep])
-  return { data, error }
+  // While a new file is loading, the previous file's data must not show.
+  return result.dep === dep ? result : { dep, data: null, error: '' }
+}
+
+/** Selection state keyed by file: switching files resets the selection without an effect. */
+function useFileSelection<T>(file: File) {
+  const [state, setState] = useState<{ file: File; sel: Set<T> }>({ file, sel: new Set() })
+  const sel = state.file === file ? state.sel : new Set<T>()
+  const toggle = (v: T) => setState((s) => {
+    const base = s.file === file ? s.sel : new Set<T>()
+    const next = new Set(base)
+    if (next.has(v)) next.delete(v); else next.add(v)
+    return { file, sel: next }
+  })
+  return { sel, toggle }
 }
 
 const Err = ({ msg }: { msg: string }) => <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200">{msg}</p>
@@ -21,12 +35,10 @@ const Loading = ({ label }: { label: string }) => <p className="flex items-cente
 /** Checkbox slide picker for remove/extract. Emits selected part names. */
 export function SlidePicker({ file, onChange }: { file: File; onChange: (parts: string[]) => void }) {
   const { data: slides, error } = useLoader<SlideInfo[]>(() => listSlides(file), file)
-  const [sel, setSel] = useState<Set<string>>(new Set())
-  useEffect(() => { setSel(new Set()) }, [file])
+  const { sel, toggle } = useFileSelection<string>(file)
   useEffect(() => { onChange([...sel]) }, [sel]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!slides) return <Loading label="Reading slides…" />
-  const toggle = (p: string) => setSel((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n })
   return (
     <div>
       <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {slides.length} slides selected</p>
@@ -48,12 +60,12 @@ export function SlidePicker({ file, onChange }: { file: File; onChange: (parts: 
 /** Ordered slide list with move buttons for reorder. Emits parts in order. */
 export function SlideReorder({ file, onChange }: { file: File; onChange: (parts: string[]) => void }) {
   const { data: slides, error } = useLoader<SlideInfo[]>(() => listSlides(file), file)
-  const [order, setOrder] = useState<SlideInfo[]>([])
-  useEffect(() => { if (slides) setOrder(slides) }, [slides])
+  const [moved, setMoved] = useState<{ src: SlideInfo[]; order: SlideInfo[] } | null>(null)
+  const order = moved && moved.src === slides ? moved.order : (slides ?? [])
   useEffect(() => { onChange(order.map((s) => s.part)) }, [order]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!slides) return <Loading label="Reading slides…" />
-  const move = (i: number, d: -1 | 1) => setOrder((o) => { const n = [...o]; const t = i + d; if (t < 0 || t >= n.length) return o; [n[i], n[t]] = [n[t], n[i]]; return n })
+  const move = (i: number, d: -1 | 1) => { const n = [...order]; const t = i + d; if (t < 0 || t >= n.length) return; [n[i], n[t]] = [n[t], n[i]]; setMoved({ src: slides, order: n }) }
   return (
     <ol className="space-y-2">
       {order.map((s, i) => (
@@ -71,12 +83,10 @@ export function SlideReorder({ file, onChange }: { file: File; onChange: (parts:
 /** Checkbox picker over a DOCX's content blocks (headings, paragraphs, tables). Emits block indexes. */
 export function DocxBlockPicker({ file, onChange }: { file: File; onChange: (indexes: number[]) => void }) {
   const { data: blocks, error } = useLoader<DocxBlock[]>(() => listDocxBlocks(file), file)
-  const [sel, setSel] = useState<Set<number>>(new Set())
-  useEffect(() => { setSel(new Set()) }, [file])
+  const { sel, toggle } = useFileSelection<number>(file)
   useEffect(() => { onChange([...sel].sort((a, b) => a - b)) }, [sel]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!blocks) return <Loading label="Reading document content…" />
-  const toggle = (i: number) => setSel((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n })
   return (
     <div>
       <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {blocks.length} content blocks selected for removal</p>
@@ -98,12 +108,10 @@ export function DocxBlockPicker({ file, onChange }: { file: File; onChange: (ind
 /** Checkbox worksheet picker. Emits selected sheet names. */
 export function SheetPicker({ file, onChange }: { file: File; onChange: (names: string[]) => void }) {
   const { data: names, error } = useLoader<string[]>(() => sheetNames(file), file)
-  const [sel, setSel] = useState<Set<string>>(new Set())
-  useEffect(() => { setSel(new Set()) }, [file])
+  const { sel, toggle } = useFileSelection<string>(file)
   useEffect(() => { onChange([...sel]) }, [sel]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!names) return <Loading label="Reading worksheets…" />
-  const toggle = (n: string) => setSel((s) => { const next = new Set(s); if (next.has(n)) next.delete(n); else next.add(n); return next })
   return (
     <div>
       <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {names.length} worksheets selected</p>

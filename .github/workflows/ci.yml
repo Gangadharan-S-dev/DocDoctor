@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run bundle:check
+      - run: npm audit --audit-level=high
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm --prefix server ci
+      - run: npm --prefix server audit --audit-level=high
+      # LibreOffice is intentionally not installed here: the suite verifies
+      # the honest 503 behavior without it and skips success-path checks.
+      # Ghostscript+qpdf ARE installed so the real compress-pdf path runs.
+      - run: sudo apt-get update && sudo apt-get install -y ghostscript qpdf
+      - run: npm run test:server

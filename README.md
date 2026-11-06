@@ -9,10 +9,15 @@ npm install
 npm run dev      # http://127.0.0.1:5173
 npm run build    # production build (tsc + vite)
 npm run preview  # preview production build
-npm test         # PDF engine tests against generated sample files
+npm test         # engine tests (node) + unit tests (vitest)
+npm run lint     # eslint + tsc
 ```
 
-## Live tools (73 in browser + 2 via the LibreOffice service = all 75 covered)
+Stack: React 19, React Router 8, Vite 8 (Rolldown), Tailwind CSS 4, TypeScript 5.9.
+Processing runs in the browser; image compression batches run in a Web Worker
+with a main-thread fallback, and OCR (Tesseract.js) runs in its own worker.
+
+## Live tools (75 in browser + 2 via the LibreOffice service = all 77 covered)
 
 - **Image (15):** Compress, Resize, Crop, JPG↔PNG, WebP Converter, JPG/PNG→WebP, Rotate, Flip, Image→PDF, PDF→Image, Watermark, Metadata Viewer, ICO Converter
 - **PDF (12):** Compress, Merge, Split, Remove/Extract/Organize pages (visual grid), Rotate, PDF→JPG/PNG, Page Numbers, Watermark
@@ -22,9 +27,23 @@ npm test         # PDF engine tests against generated sample files
 - **Other (10):** Create/Extract ZIP (traversal-safe), TXT Converter, HTML→TXT, Markdown Converter, JSON Formatter, JSON→XML, XML Formatter, CSV Tools, File Metadata (SHA-256)
 
 Phase 4 added: Edit PDF (click-to-place text), Sign PDF (drawn signature),
-Repair PDF (rebuild recovery), PDF→Word / PDF→Excel (text-based, OCR-free),
+Repair PDF (rebuild recovery), PDF→Word / PDF→Excel (text-based),
 PDF→PowerPoint/PPTX (page-image slides), Word→PDF (text-flow) and EPUB→PDF —
 each labeled in the UI with exactly what it simplifies.
+
+Upgrade release (v0.2.0) added: **OCR PDF to Text** and **Image to Text (OCR)**
+(on-device Tesseract.js, English), real rasterizing **Extreme** PDF compression,
+progress + cancel for long jobs, favorites/recent tools (local only), dark mode,
+EN/ES/HI interface language for the app chrome, PWA offline shell, and per-tool
+SEO metadata. Tool names and content stay in English in every language.
+
+P0 upgrade added: OCR in **13 languages** with **searchable PDF** output
+(page image + invisible text layer, verified extractable), prerendered
+SEO HTML for every route (87 static shells generated at build time),
+an initial-bundle budget gate (`npm run bundle:check` — the entry no
+longer preloads the PptxGenJS engine), and optional server-side
+**Compress PDF** via Ghostscript/qpdf (text-preserving; see the
+conversion service below).
 
 Also live: **Protect PDF** (real AES-256 encryption, verified to refuse
 opening without the password) and **Unlock PDF** (correct password required —
@@ -74,13 +93,19 @@ server/                Planned (Phase 2+): Express + TypeScript API with modular
 
 ## Conversion server (optional, LibreOffice-backed)
 
-Unlocks **PPTX→PDF** and **Slides→Images** with full rendering fidelity:
+Unlocks **PPTX→PDF** and **Slides→Images** with full rendering fidelity,
+plus real **Compress PDF** when Ghostscript or qpdf is installed:
 
 ```bash
 npm --prefix server install
 npm --prefix server start   # http://127.0.0.1:8080 — requires LibreOffice installed
 npm run test:server         # health/honesty checks (503 without LibreOffice)
 ```
+
+Or with Docker (bundles LibreOffice): `docker build -t docdoctor-server server/`
+then `docker run --rm -p 8080:8080 docdoctor-server`. Optional env: `HOST`
+(bind address, default `127.0.0.1`), `ALLOWED_ORIGIN` (single CORS origin,
+unset = same-origin only), `TRUST_PROXY` (behind a proxy, for rate limits).
 
 The web app proxies `/api` to it in dev/preview (see `vite.config.ts`) and each
 server tool page probes `/api/health` — the convert button only enables when

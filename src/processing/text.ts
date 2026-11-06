@@ -58,7 +58,7 @@ export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promis
     : file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.markdown') ? 'md' : 'txt'
   if (from === to) return { name: file.name, blob: new Blob([raw], { type: 'text/plain' }) }
   // Normalize to HTML or plain text first.
-  let html = '', text = ''
+  let html: string; let text: string
   if (from === 'html') {
     html = raw
     const doc = new DOMParser().parseFromString(raw, 'text/html')
@@ -85,7 +85,7 @@ export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promis
 // ── JSON / XML ───────────────────────────────────────────────────
 export function formatJson(text: string, minify: boolean): string {
   let parsed: unknown
-  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`) }
+  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
   return minify ? JSON.stringify(parsed) : JSON.stringify(parsed, null, 2)
 }
 
@@ -105,7 +105,7 @@ function jsonNode(key: string, val: unknown, indent: string): string {
 
 export function jsonToXml(text: string): string {
   let parsed: unknown
-  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`) }
+  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
   const body = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
     ? Object.entries(parsed as Record<string, unknown>).map(([k, v]) => jsonNode(k, v, '  ')).join('\n')
     : jsonNode('item', parsed, '  ')

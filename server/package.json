@@ -9,10 +9,10 @@
     "test": "node --test test/"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^0.1.65",
-    "express": "^4.21.2",
+    "@napi-rs/canvas": "^1.1.0",
+    "express": "^5.3.0",
     "jszip": "^3.10.1",
-    "multer": "^1.4.5-lts.1",
-    "pdfjs-dist": "^5.0.0"
+    "multer": "^2.5.0",
+    "pdfjs-dist": "^6.5.438"
   }
 }

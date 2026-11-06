@@ -107,7 +107,17 @@ export async function rotatePdf(file: File, deg: number, pages: number[] | 'all'
  * stores objects in compressed streams. Honest limitation: scanned/image-heavy
  * PDFs may not shrink much — we always report the real before/after sizes.
  */
-export async function compressPdf(file: File, level: 'less' | 'recommended' | 'extreme'): Promise<OutputFile> {
+export interface ProcessOpts {
+  signal?: AbortSignal
+  onProgress?: (done: number, total: number) => void
+}
+
+export function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('Processing cancelled.', 'AbortError')
+}
+
+export async function compressPdf(file: File, level: 'less' | 'recommended' | 'extreme', opts: ProcessOpts = {}): Promise<OutputFile> {
+  if (level === 'extreme') return rasterizePdf(file, opts)
   const src = await load(await file.arrayBuffer())
   const doc = await PDFDocument.create()
   ;(await doc.copyPages(src, src.getPageIndices())).forEach((p) => doc.addPage(p))
@@ -116,6 +126,35 @@ export async function compressPdf(file: File, level: 'less' | 'recommended' | 'e
   }
   const bytes = await doc.save({ useObjectStreams: level !== 'less', addDefaultPage: false })
   return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(bytes) }
+}
+
+/**
+ * Extreme compression: rasterize each page to a downsampled JPEG and rebuild.
+ * This is the only browser technique that reliably shrinks scanned/image-heavy
+ * PDFs. Trade-off (disclosed in the UI): text becomes part of the page image.
+ */
+async function rasterizePdf(file: File, opts: ProcessOpts): Promise<OutputFile> {
+  const pdf = await loadPdfJs(await file.arrayBuffer())
+  const doc = await PDFDocument.create()
+  const scale = 1.6 // ~115 dpi — readable, far smaller than typical 300 dpi scans
+  for (let i = 1; i <= pdf.numPages; i++) {
+    throwIfAborted(opts.signal)
+    const page = await pdf.getPage(i)
+    const vp = page.getViewport({ scale })
+    const c = document.createElement('canvas')
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height)
+    const ctx = c.getContext('2d')!
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
+    await page.render({ canvas: c, viewport: vp }).promise
+    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), 'image/jpeg', 0.72))
+    const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()))
+    const p = doc.addPage([vp.width / scale, vp.height / scale])
+    p.drawImage(img, { x: 0, y: 0, width: p.getWidth(), height: p.getHeight() })
+    opts.onProgress?.(i, pdf.numPages)
+  }
+  closePdf(pdf)
+  doc.setProducer('DocDoctor'); doc.setCreator('DocDoctor')
+  return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(await doc.save({ useObjectStreams: true })) }
 }
 
 export async function addPageNumbers(file: File, position: 'bottom-center' | 'bottom-right' | 'bottom-left', start: number, fmt: string): Promise<OutputFile> {
@@ -153,6 +192,41 @@ async function loadPdfJs(bytes: ArrayBuffer) {
     pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
   } catch { /* Node/test runtime: pdf.js resolves its worker itself. */ }
   return pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise
+}
+
+export interface RenderedPage {
+  /** JPEG data URL (for OCR / previews). */
+  dataUrl: string
+  /** Raw JPEG bytes of the rendered page. */
+  jpeg: Uint8Array
+  /** Rendered image size in pixels. */
+  widthPx: number
+  heightPx: number
+  /** Original page size in PDF points (at scale 1). */
+  pageWidth: number
+  pageHeight: number
+}
+
+/** Render one page (1-based) to JPEG + geometry, for OCR searchable PDFs. */
+export async function renderPageJpeg(bytes: ArrayBuffer, pageNum: number, scale = 2): Promise<RenderedPage> {
+  const pdf = await loadPdfJs(bytes.slice(0))
+  const page = await pdf.getPage(Math.min(Math.max(1, pageNum), pdf.numPages))
+  const vp = page.getViewport({ scale })
+  const vp1 = page.getViewport({ scale: 1 })
+  const c = document.createElement('canvas')
+  c.width = Math.floor(vp.width); c.height = Math.floor(vp.height)
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
+  await page.render({ canvas: c, viewport: vp }).promise
+  const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), 'image/jpeg', 0.85))
+  const out: RenderedPage = {
+    dataUrl: c.toDataURL('image/jpeg', 0.85),
+    jpeg: new Uint8Array(await blob.arrayBuffer()),
+    widthPx: c.width, heightPx: c.height,
+    pageWidth: vp1.width, pageHeight: vp1.height,
+  }
+  closePdf(pdf)
+  return out
 }
 
 /** Render one page (1-based) to a JPEG data URL for placement previews. */
@@ -225,10 +299,11 @@ export async function renderThumbnails(bytes: ArrayBuffer, scale = 0.35): Promis
   return urls
 }
 
-export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png', scale: number): Promise<OutputFile[]> {
+export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png', scale: number, opts: ProcessOpts = {}): Promise<OutputFile[]> {
   const pdf = await loadPdfJs(await file.arrayBuffer())
   const outs: OutputFile[] = []
   for (let i = 1; i <= pdf.numPages; i++) {
+    throwIfAborted(opts.signal)
     const page = await pdf.getPage(i)
     const vp = page.getViewport({ scale })
     const c = document.createElement('canvas')
@@ -238,6 +313,7 @@ export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png'
     await page.render({ canvas: c, viewport: vp }).promise
     const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), format, 0.92))
     outs.push({ name: `${stem(file.name)}-page-${i}.${format === 'image/jpeg' ? 'jpg' : 'png'}`, blob })
+    opts.onProgress?.(i, pdf.numPages)
   }
   closePdf(pdf)
   return outs

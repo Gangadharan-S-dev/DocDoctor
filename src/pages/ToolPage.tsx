@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ShieldCheck, FileCheck2, Clock3, Info, Loader2, Download, FolderDown, RotateCcw, AlertTriangle } from 'lucide-react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams } from 'react-router'
+import { ShieldCheck, FileCheck2, Clock3, Info, Loader2, Download, FolderDown, RotateCcw, AlertTriangle, Star, XCircle } from 'lucide-react'
 import { TOOLS, categoryById, formatSize, isImplemented, isServerTool, serverEndpointFor, toolById, type Tool } from '../data/tools'
 import UploadArea, { type PickedFile } from '../components/UploadArea'
 import ToolCard from '../components/ToolCard'
@@ -9,6 +9,10 @@ import { downloadBlob, downloadZip } from '../processing/download'
 import type { ImageMeta, ImgFormat } from '../processing/image'
 import type { PageOp } from '../processing/pdf'
 import type { FileMeta } from '../processing/text'
+import { runTool } from './tool/runEngine'
+import { OCR_LANGUAGES } from '../processing/ocr-languages'
+import { isFavorite, pushRecent, toggleFavorite } from '../lib/prefs'
+import { useI18n } from '../lib/i18n'
 
 // Heavy engines and pickers load on demand, keeping the initial bundle small.
 const PdfPageGrid = lazy(() => import('../components/PdfPageGrid'))
@@ -87,37 +91,60 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [sigData, setSigData] = useState<string | null>(null)
   const [signPos, setSignPos] = useState<'bottom-right' | 'bottom-left' | 'center'>('bottom-right')
   const [serverOk, setServerOk] = useState<boolean | null>(null)
+  const [compressorOk, setCompressorOk] = useState<boolean | null>(null)
+  const [compressorName, setCompressorName] = useState<string | null>(null)
   const [imgFormat, setImgFormat] = useState<'jpg' | 'png'>('jpg')
   const [pwd, setPwd] = useState('')
   const [pwd2, setPwd2] = useState('')
   const [blockSel, setBlockSel] = useState<number[]>([])
+  const [ocrLang, setOcrLang] = useState('eng')
+  const [ocrFormat, setOcrFormat] = useState<'txt' | 'pdf' | 'both'>('txt')
   const [previewText, setPreviewText] = useState('')
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [fav, setFav] = useState(() => isFavorite(tool.id))
+  const abortRef = useRef<AbortController | null>(null)
+  const { t } = useI18n()
+
+  useEffect(() => { pushRecent(tool.id) }, [tool.id])
 
   const first = files[0]?.file
   const totalIn = files.reduce((s, f) => s + f.file.size, 0)
   const totalOut = results.reduce((s, r) => s + r.blob.size, 0)
 
+  // Changing the file set invalidates results and per-file derived state.
+  const handleFilesChange = (next: PickedFile[]) => {
+    setFiles(next)
+    setResults([]); setError(''); setMeta(null); setDims(null); setFileMeta(null); setPreviewText('')
+  }
+
   // Load image dimensions / metadata when the first file changes.
   useEffect(() => {
-    setResults([]); setError(''); setMeta(null); setDims(null); setFileMeta(null); setPreviewText('')
     if (!first) return
-    if (tool.id === 'file-metadata') { import('../processing/text').then((m) => m.fileMetadata(first)).then(setFileMeta).catch(() => setError('Could not read this file.')); return }
-    if (tool.id === 'edit-word') { import('../processing/office').then((m) => m.wordExtractText(first)).then(setEditText).catch(() => setError('Could not extract text — please use a .docx file.')); return }
+    let alive = true
+    if (tool.id === 'file-metadata') { import('../processing/text').then((m) => m.fileMetadata(first)).then((v) => { if (alive) setFileMeta(v) }).catch(() => { if (alive) setError('Could not read this file.') }); return () => { alive = false } }
+    if (tool.id === 'edit-word') { import('../processing/office').then((m) => m.wordExtractText(first)).then((v) => { if (alive) setEditText(v) }).catch(() => { if (alive) setError('Could not extract text — please use a .docx file.') }); return () => { alive = false } }
     if (!first.type.startsWith('image/')) return
     import('../processing/image').then((m) => m.imageMetadata(first)).then((m) => {
+      if (!alive) return
       setMeta(m); setDims({ w: m.width, h: m.height }); setWidth(m.width); setHeight(m.height)
     }).catch(() => {})
-  }, [first]) // eslint-disable-line
+    return () => { alive = false }
+  }, [first]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Probe the optional conversion service for server-backed/upgradable tools.
   useEffect(() => {
-    if (!serverEndpointFor(tool)) return
+    if (!serverEndpointFor(tool) && tool.id !== 'compress-pdf') return
     let alive = true
     const base = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
     fetch(`${base}/api/health`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('bad health'))))
-      .then((h: { libreOffice?: boolean }) => { if (alive) setServerOk(!!h.libreOffice) })
-      .catch(() => { if (alive) setServerOk(false) })
+      .then((h: { libreOffice?: boolean; pdfCompressor?: boolean; compressor?: string | null }) => {
+        if (!alive) return
+        setServerOk(!!h.libreOffice)
+        setCompressorOk(!!h.pdfCompressor)
+        setCompressorName(h.compressor ?? null)
+      })
+      .catch(() => { if (alive) { setServerOk(false); setCompressorOk(false) } })
     return () => { alive = false }
   }, [tool])
 
@@ -129,7 +156,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       const form = new FormData()
       form.append('file', first)
       if (tool.id === 'slides-to-images') form.append('format', imgFormat)
-      const endpoint = serverEndpointFor(tool)
+      if (tool.id === 'compress-pdf') form.append('level', level)
+      const endpoint = tool.id === 'compress-pdf' ? 'compress-pdf' : serverEndpointFor(tool)
       if (!endpoint) throw new Error('This tool has no server conversion.')
       const res = await fetch(`${base}/api/convert/${endpoint}`, { method: 'POST', body: form })
       if (!res.ok) {
@@ -140,7 +168,9 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       if (!blob.size) throw new Error('The server returned an empty file.')
       const name = tool.id === 'slides-to-images'
         ? `${first.name.replace(/\.[^.]+$/, '')}-slides.zip`
-        : `${first.name.replace(/\.[^.]+$/, '')}.pdf`
+        : tool.id === 'compress-pdf'
+          ? `${first.name.replace(/\.[^.]+$/, '')}-compressed.pdf`
+          : `${first.name.replace(/\.[^.]+$/, '')}.pdf`
       setResults([{ name, blob }])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Server conversion failed.')
@@ -148,10 +178,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   }
 
   // Text preview for textual outputs (JSON/XML/HTML/TXT/CSV results).
+  // previewText is cleared by run()/handleFilesChange, so stale text never shows.
   useEffect(() => {
     const r = results[0]
-    if (!r || !/\.(txt|html|json|xml|csv|md)$/i.test(r.name)) { setPreviewText(''); return }
-    r.blob.text().then((t) => setPreviewText(t.slice(0, 4000))).catch(() => setPreviewText(''))
+    if (!r || !/\.(txt|html|json|xml|csv|md)$/i.test(r.name)) return
+    let alive = true
+    r.blob.text().then((text) => { if (alive) setPreviewText(text.slice(0, 4000)) }).catch(() => { if (alive) setPreviewText('') })
+    return () => { alive = false }
   }, [results])
 
   const onWidth = (v: number) => { setWidth(v); if (lock && dims) setHeight(Math.max(1, Math.round((v * dims.h) / dims.w))) }
@@ -159,101 +192,29 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
   async function run() {
     if (!files.length || busy) return
-    setBusy(true); setError(''); setResults([])
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBusy(true); setError(''); setResults([]); setProgress(null); setPreviewText('')
     try {
-      const [IMG, PDF, OFF, TXT, ADV, CRY] = await Promise.all([
-        import('../processing/image'), import('../processing/pdf'),
-        import('../processing/office'), import('../processing/text'), import('../processing/advanced'),
-        import('../processing/crypto'),
-      ])
-      const fs = files.map((f) => f.file)
-      const f0 = fs[0]
-      let out: OutputFile[] = []
-      switch (tool.id) {
-        case 'compress-image': out = await Promise.all(fs.map((f) => IMG.compressImage(f, { quality: quality / 100, format }))); break
-        case 'resize-image': out = await Promise.all(fs.map((f) => IMG.resizeImage(f, width, height, format))); break
-        case 'crop-image': out = [await IMG.cropImage(f0, crop.x, crop.y, crop.w, crop.h)]; break
-        case 'jpg-to-png': case 'png-to-jpg': case 'jpg-to-webp': case 'png-to-webp': {
-          const t: ImgFormat = tool.id.endsWith('png') ? 'image/png' : tool.id.endsWith('webp') ? 'image/webp' : 'image/jpeg'
-          out = await Promise.all(fs.map((f) => IMG.convertImage(f, t))); break
-        }
-        case 'webp-converter': out = await Promise.all(fs.map((f) => IMG.convertImage(f, format === 'keep' ? 'image/webp' : format))); break
-        case 'rotate-image': out = await Promise.all(fs.map((f) => IMG.rotateImage(f, angle))); break
-        case 'flip-image': out = await Promise.all(fs.map((f) => IMG.flipImage(f, flipH, flipV))); break
-        case 'image-watermark': out = await Promise.all(fs.map((f) => IMG.watermarkImage(f, { text: wmText || 'DocDoctor', opacity: wmOpacity, fontSize: Math.max(24, Math.round((dims?.w ?? 800) / 18)), position: 'bottom-right' }))); break
-        case 'image-to-pdf': out = [await IMG.imagesToPdf(fs, pageSize)]; break
-        case 'ico-converter': out = [await IMG.imageToIco(f0, [16, 24, 32, 48, 64])]; break
-        case 'merge-pdf': out = [await PDF.mergePdfs(fs)]; break
-        case 'split-pdf': out = await PDF.splitPdf(f0, ranges); break
-        case 'remove-pdf-pages': out = [await PDF.removePages(f0, gridValue as number[])]; break
-        case 'extract-pdf-pages': out = [await PDF.extractPages(f0, gridValue as number[])]; break
-        case 'organize-pdf': out = [await PDF.organizePdf(f0, gridValue as PageOp[])]; break
-        case 'rotate-pdf': out = [await PDF.rotatePdf(f0, angle, 'all')]; break
-        case 'compress-pdf': out = [await PDF.compressPdf(f0, level)]; break
-        case 'pdf-page-numbers': out = [await PDF.addPageNumbers(f0, pos, 1, 'Page {n} of {total}')]; break
-        case 'pdf-watermark': out = [await PDF.watermarkPdf(f0, wmText || 'DocDoctor', wmOpacity, 48)]; break
-        case 'pdf-to-jpg': case 'pdf-to-image': out = await PDF.pdfToImages(f0, 'image/jpeg', scale); break
-        case 'pdf-to-png': out = await PDF.pdfToImages(f0, 'image/png', scale); break
-        // ── Phase 3: Word ──
-        case 'word-to-txt': case 'extract-word-text': out = [await OFF.wordToText(f0)]; break
-        case 'word-to-html': out = [await OFF.wordToHtml(f0)]; break
-        case 'compress-docx': out = [await OFF.recompressPackage(f0, `${f0.name.replace(/\.docx$/i, '')}-compressed.docx`, OFF.DOCX_TYPE)]; break
-        case 'merge-word': out = [await OFF.mergeWord(fs)]; break
-        case 'split-word': out = await OFF.splitWord(f0, splitMode); break
-        case 'edit-word': out = [await OFF.textToDocx(editText, `${f0.name.replace(/\.docx$/i, '')}-edited.docx`)]; break
-        // ── Phase 3: PowerPoint ──
-        case 'compress-powerpoint': out = [await OFF.recompressPackage(f0, `${f0.name.replace(/\.pptx$/i, '')}-compressed.pptx`, OFF.PPTX_TYPE)]; break
-        case 'merge-presentations': out = [await OFF.mergePresentations(fs)]; break
-        case 'split-presentations': out = await OFF.splitPresentation(f0); break
-        case 'remove-slides': out = [await OFF.removeSlides(f0, slideSel)]; break
-        case 'extract-slides': out = [await OFF.extractSlides(f0, slideSel)]; break
-        case 'reorder-slides': out = [await OFF.reorderSlides(f0, slideOrder)]; break
-        // ── Phase 3: Excel ──
-        case 'xls-to-xlsx': out = [await OFF.xlsToXlsx(f0)]; break
-        case 'csv-to-excel': out = [await OFF.csvToExcel(f0)]; break
-        case 'excel-to-csv': out = await OFF.excelToCsv(f0); break
-        case 'merge-excel': out = [await OFF.mergeExcel(fs)]; break
-        case 'split-worksheets': out = await OFF.splitWorksheets(f0); break
-        case 'remove-worksheets': out = [await OFF.removeWorksheets(f0, sheetSel)]; break
-        case 'compress-excel': out = [await OFF.recompressPackage(f0, `${f0.name.replace(/\.xlsx$/i, '')}-compressed.xlsx`, OFF.XLSX_TYPE)]; break
-        case 'excel-to-html': out = [await OFF.excelToHtml(f0)]; break
-        case 'xlsx-to-pdf': case 'excel-to-pdf': out = [await OFF.excelToPdf(f0)]; break
-        // ── Phase 3: Other file tools ──
-        case 'zip-files': out = [await TXT.createZip(fs)]; break
-        case 'extract-zip': out = await TXT.extractZip(f0); break
-        case 'html-to-txt': out = [await TXT.htmlToText(f0)]; break
-        case 'txt-converter': case 'markdown-converter': out = [await TXT.convertText(f0, txtTo)]; break
-        case 'json-formatter': out = [{ name: f0.name, blob: new Blob([TXT.formatJson(await f0.text(), jsonMinify)], { type: 'application/json' }) }]; break
-        case 'json-to-xml': out = [{ name: `${f0.name.replace(/\.json$/i, '')}.xml`, blob: new Blob([TXT.jsonToXml(await f0.text())], { type: 'application/xml' }) }]; break
-        case 'xml-formatter': out = [{ name: f0.name, blob: new Blob([TXT.formatXml(await f0.text())], { type: 'application/xml' }) }]; break
-        case 'csv-tools': out = [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), csvAction, ',')], { type: 'text/csv' }) }]; break
-        // ── Phase 4: advanced ──
-        case 'edit-pdf': out = [await ADV.editPdfAddText(f0, pdfText, pdfPage, pdfX, pdfY, pdfSize, pdfColor)]; break
-        case 'sign-pdf': {
-          if (!sigData) throw new Error('Draw your signature first.')
-          const sigBytes = new Uint8Array(await (await fetch(sigData)).arrayBuffer())
-          out = [await ADV.signPdf(f0, sigBytes, pdfPage, signPos)]; break
-        }
-        case 'repair-pdf': out = [await ADV.repairPdf(f0)]; break
-        case 'pdf-to-word': case 'pdf-to-docx': out = [await ADV.pdfToDocx(f0)]; break
-        case 'pdf-to-excel': out = [await ADV.pdfToExcel(f0)]; break
-        case 'pdf-to-powerpoint': case 'pdf-to-pptx': out = [await ADV.pdfToPowerpoint(f0, scale)]; break
-        case 'word-to-pdf': case 'docx-to-pdf': out = [await ADV.docxToPdf(f0)]; break
-        case 'epub-to-pdf': out = [await ADV.epubToPdf(f0)]; break
-        // ── Phase 5: encryption + Word content removal ──
-        case 'protect-pdf': {
-          if (pwd !== pwd2) throw new Error('Passwords do not match.')
-          out = [await CRY.protectPdf(f0, pwd)]; break
-        }
-        case 'unlock-pdf': out = [await CRY.unlockPdf(f0, pwd)]; break
-        case 'remove-word-pages': out = [await OFF.removeDocxBlocks(f0, blockSel)]; break
-        default: throw new Error('This engine is not available yet.')
-      }
+      const out = await runTool({
+        tool,
+        files: files.map((f) => f.file),
+        signal: controller.signal,
+        onProgress: (done, total) => setProgress({ done, total }),
+        settings: {
+          quality, format, width, height, crop, angle, flipH, flipV, wmText, wmOpacity,
+          wmFontSize: Math.max(24, Math.round((dims?.w ?? 800) / 18)),
+          pageSize, ranges, level, pos, scale, slideSel, slideOrder, sheetSel, splitMode,
+          txtTo, jsonMinify, csvAction, editText, pdfText, pdfPage, pdfX, pdfY, pdfSize,
+          pdfColor, sigData, signPos, pwd, pwd2, blockSel, gridValue, ocrLang, ocrFormat,
+        },
+      })
       if (!out.length || out.some((o) => o.blob.size === 0)) throw new Error('Processing produced an empty file. Please try different settings.')
       setResults(out)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Processing failed. The file may be damaged, encrypted, or in an unsupported variant.')
-    } finally { setBusy(false) }
+      if (e instanceof DOMException && e.name === 'AbortError') setError('Processing cancelled.')
+      else setError(e instanceof Error ? e.message : 'Processing failed. The file may be damaged, encrypted, or in an unsupported variant.')
+    } finally { setBusy(false); setProgress(null); abortRef.current = null }
   }
 
   const savings = results.length && totalIn ? Math.round((1 - totalOut / totalIn) * 100) : null
@@ -286,8 +247,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
       <div className="mt-5 flex items-start gap-4">
         <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl" style={{ background: cat.soft, color: cat.color }}><Icon className="h-7 w-7" /></span>
-        <div>
-          <h1 className="font-display text-3xl font-extrabold text-ink-950 sm:text-4xl">{tool.name}</h1>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-3xl font-extrabold text-ink-950 sm:text-4xl">{tool.name}</h1>
+            <button type="button" aria-label={fav ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={fav}
+              onClick={() => { toggleFavorite(tool.id); setFav(!fav) }}
+              className={`rounded-lg p-2 transition hover:bg-amber-50 ${fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}>
+              <Star className={`h-6 w-6 ${fav ? 'fill-amber-400 text-amber-500' : ''}`} />
+            </button>
+          </div>
           <p className="mt-1.5 max-w-2xl text-slate-600">{tool.description}</p>
           <p className="mt-3 flex flex-wrap gap-2">
             <span className="chip">Accepts: {tool.acceptLabel}</span>
@@ -298,7 +266,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       </div>
 
       <section className="card mt-8 p-5 sm:p-7" aria-label={`${tool.name} workspace`}>
-        <UploadArea tool={tool} files={files} onChange={setFiles} />
+        <UploadArea tool={tool} files={files} onChange={handleFilesChange} />
 
         {tool.id === 'image-metadata' && meta && (
           <dl className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -384,7 +352,14 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {(tool.id === 'image-watermark' || tool.id === 'pdf-watermark') && <div className="grid gap-4 sm:grid-cols-2"><label className="block"><span className="mb-1.5 block text-sm font-bold">Watermark text</span><input value={wmText} onChange={(e) => setWmText(e.target.value)} className="input" maxLength={60} /></label>{slider('Opacity', Math.round(wmOpacity * 100), (v) => setWmOpacity(v / 100), 5, 90, '%')}</div>}
             {tool.id === 'image-to-pdf' && sel('Page size', pageSize, setPageSize, [['fit', 'Fit page to image'], ['a4', 'A4 with margins']])}
             {tool.id === 'split-pdf' && <label className="block"><span className="mb-1.5 block text-sm font-bold">Pages to extract</span><input value={ranges} onChange={(e) => setRanges(e.target.value)} className="input" placeholder="e.g. 1-3, 5 — separate outputs with ; e.g. 1-2; 3-4" /><span className="mt-1 block text-xs font-medium text-slate-500">Use ranges like 1-3, 5. Separate groups with a semicolon to create multiple files.</span></label>}
-            {tool.id === 'compress-pdf' && <div>{sel('Compression level', level, setLevel, [['extreme', 'Extreme — smallest, rebuilds file'], ['recommended', 'Recommended — balanced'], ['less', 'Less — lightest touch']])}<p className="mt-2 text-xs text-slate-500">Runs in your browser: rebuilds the PDF and strips metadata. Image-heavy scans may shrink less — real before/after sizes are always shown below.</p></div>}
+            {tool.id === 'compress-pdf' && <div>{sel('Compression level', level, setLevel, [['extreme', 'Extreme — smallest, rasterizes pages'], ['recommended', 'Recommended — balanced'], ['less', 'Less — lightest touch']])}<p className="mt-2 text-xs text-slate-500">Recommended rebuilds the PDF losslessly and strips metadata. Extreme rasterizes each page to a downsampled image — the biggest shrink for scans, but page text is no longer selectable. Real before/after sizes are always shown below.</p></div>}
+            {(tool.id === 'ocr-pdf' || tool.id === 'image-ocr') && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {sel('OCR language', ocrLang, setOcrLang, OCR_LANGUAGES.map((l) => [l.code, l.label] as [string, string]))}
+                {sel('Output', ocrFormat, setOcrFormat, [['txt', 'Plain text (.txt)'], ['pdf', 'Searchable PDF'], ['both', 'Both text + searchable PDF']])}
+                <p className="text-xs font-semibold text-slate-500 sm:col-span-2">OCR runs entirely on your device. The first run downloads the selected language model (a few MB) once and caches it; your file itself is never uploaded. Searchable PDFs carry an invisible text layer over the page image — best for Latin scripts; other scripts are fully included in the text output. Best results on clean, high-contrast scans.</p>
+              </div>
+            )}
             {tool.id === 'pdf-page-numbers' && sel('Position', pos, setPos, [['bottom-center', 'Bottom center'], ['bottom-right', 'Bottom right'], ['bottom-left', 'Bottom left']])}
             {(tool.id === 'pdf-to-jpg' || tool.id === 'pdf-to-png' || tool.id === 'pdf-to-image') && sel('Render quality', String(scale), (v: string) => setScale(+v), [['1', 'Standard (72 dpi)'], ['2', 'High (144 dpi)'], ['3', 'Print (216 dpi)']])}
             {tool.id === 'split-word' && <div>{sel('Split by', splitMode, setSplitMode, [['heading', 'Heading 1 sections'], ['paragraphs', 'Every 15 paragraphs']])}<p className="mt-2 text-xs text-slate-500">Word pagination depends on fonts and rendering, so splitting uses document structure — headings or paragraph blocks — never guessed page breaks.</p></div>}
@@ -434,9 +409,24 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <span className="text-sm font-semibold text-slate-600">Total input: <strong className="text-ink-950">{formatSize(totalIn)}</strong></span>
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500"><FileCheck2 className="h-4 w-4 text-teal2" /> Validated · processed locally, never uploaded</span>
             </div>
-            <button type="button" onClick={run} disabled={busy} className="btn-accent w-full sm:w-auto">
-              {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Processing…</> : tool.name}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={run} disabled={busy} className="btn-accent w-full sm:w-auto">
+                {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> {t('common.processing')}</> : tool.name}
+              </button>
+              {busy && (
+                <button type="button" onClick={() => abortRef.current?.abort()} className="btn-ghost !py-2.5">
+                  <XCircle className="h-4 w-4" /> {t('common.cancel')}
+                </button>
+              )}
+              {busy && progress && progress.total > 1 && (
+                <span className="flex min-w-44 flex-1 items-center gap-2" role="status">
+                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
+                    <span className="block h-full rounded-full bg-accent transition-all" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+                  </span>
+                  <span className="text-xs font-bold text-slate-500">{progress.done}/{progress.total}</span>
+                </span>
+              )}
+            </div>
           </div>
         )}
 
@@ -448,6 +438,18 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             </div>
             <button type="button" onClick={runServer} disabled={busy} className="btn-primary !py-2.5">
               {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Converting…</> : 'Convert with LibreOffice'}
+            </button>
+          </div>
+        )}
+
+        {files.length > 0 && tool.id === 'compress-pdf' && compressorOk && (
+          <div className="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft/50 px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-ink-950">Server compression available{compressorName ? ` — ${compressorName}` : ''}</p>
+              <p className="text-xs font-semibold text-slate-500">Real Ghostscript/qpdf compression on the server: images are downsampled at your chosen level while text stays selectable — unlike the browser Extreme mode, which rasterizes pages. Your file is processed in an isolated temp folder and deleted immediately after.</p>
+            </div>
+            <button type="button" onClick={runServer} disabled={busy} className="btn-primary !py-2.5">
+              {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Compressing…</> : 'Compress on server'}
             </button>
           </div>
         )}
@@ -517,7 +519,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             </ul>
             <div className="mt-4 flex flex-wrap gap-2.5">
               {results.length > 1 && <button type="button" onClick={() => downloadZip(results, `${tool.id}-results.zip`)} className="btn-accent !py-2.5"><FolderDown className="h-4 w-4" /> Download all as ZIP</button>}
-              <button type="button" onClick={() => { setFiles([]); setResults([]); setError('') }} className="btn-ghost !py-2.5"><RotateCcw className="h-4 w-4" /> Start another</button>
+              <button type="button" onClick={() => handleFilesChange([])} className="btn-ghost !py-2.5"><RotateCcw className="h-4 w-4" /> Start another</button>
             </div>
           </div>
         )}

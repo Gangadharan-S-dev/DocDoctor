@@ -4,10 +4,16 @@ Last audited: Phase 5. Scope: browser app (`src/`) + conversion service (`server
 
 ## Model
 
-73 of 75 tools process files **entirely in the browser** — uploaded files never
+75 of 77 tools process files **entirely in the browser** — uploaded files never
 leave the device, so there is no server-side file storage to breach for them.
 The 2 LibreOffice-backed tools upload to the optional conversion service over
 the deployment's own origin.
+
+Last dependency audit (v0.2.0 upgrade): `npm audit` reports **0 vulnerabilities**
+for both the web app and the server. SheetJS comes from the vendor CDN tarball
+(0.20.3, the patched line — the npm `xlsx` package is frozen at a vulnerable
+0.18.5), `image-size` is pinned past the vulnerable range via `overrides`, and
+React Router is on the v8 line.
 
 ## Controls verified in code
 
@@ -19,8 +25,8 @@ the deployment's own origin.
 | PDF/Office parsers | pdf-lib, PDF.js, JSZip, SheetJS, mammoth run in the page sandbox; malicious documents can at worst crash the tab (ErrorBoundary shows a recovery screen; nothing persists). |
 | Object URLs | Preview/download URLs are revoked (`src/processing/download.ts`, ToolPage effects). |
 | Macros/scripts | Never executed: Office files are parsed as data only. |
-| External requests | The app itself makes no third-party calls; the only external fetch is Google Fonts (fonts.googleapis.com / fonts.gstatic.com). Self-host the two font families if even that is unacceptable. |
-| Conversion service | Isolated per-job temp dirs under the OS temp folder; files deleted in a `finally` after every request plus a 30-minute sweeper; 50 MB upload cap; 30 conversions/10 min/IP rate limit; 120 s converter timeout; job IDs are UUIDs; errors return messages only — never paths or stack traces; LibreOffice spawned with an argv array (no shell, so filenames cannot inject commands; filenames are also sanitized). |
+| External requests | Fonts are self-hosted (Fontsource), so the app makes no third-party calls by default. One exception: the two OCR tools download the Tesseract.js engine and English language data (~4 MB) from the Tesseract CDN on first use and cache them; documents themselves never leave the device. The CSP allowlists exactly those two hosts. |
+| Conversion service | Isolated per-job temp dirs under the OS temp folder; files deleted in a `finally` after every request plus a 30-minute sweeper; 50 MB upload cap; 30 conversions/10 min/IP rate limit (with `Retry-After`); 120 s converter timeout; job IDs are UUIDs; errors return messages only — never paths or stack traces; LibreOffice spawned with an argv array (no shell, so filenames cannot inject commands; filenames are also sanitized). Security headers on every response; CORS only for a single `ALLOWED_ORIGIN` when configured; a `server/Dockerfile` (Node 24 + LibreOffice, non-root user) is provided. |
 | Deployment headers | CSP, `nosniff`, frame denial, referrer and permissions policies shipped in `vercel.json` and `public/_headers`. |
 
 ## Known limits

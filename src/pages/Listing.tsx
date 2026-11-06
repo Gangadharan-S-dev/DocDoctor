@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { Search } from 'lucide-react'
-import { CATEGORIES, TOOLS, categoryById, toolsByCategory, type CategoryId } from '../data/tools'
+import { CATEGORIES, TOOLS, toolsByCategory, type CategoryId } from '../data/tools'
 import ToolCard from '../components/ToolCard'
 
 export function ToolsPage() {
@@ -61,4 +61,3 @@ export function CategoryPage() {
   )
 }
 
-export { categoryById }

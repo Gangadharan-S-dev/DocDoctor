@@ -6,6 +6,7 @@ import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { renderPdfToImages } from './render.js'
 import { resolveLibreOffice, runLibreOffice, INSTALL_HINT } from './libreoffice.js'
+import { resolvePdfCompressor, compressPdfFile, COMPRESS_HINT } from './pdf-compress.js'
 
 const TMP_ROOT = path.join(os.tmpdir(), 'docdoctor-jobs')
 const MAX_FILE = 50 * 1024 * 1024
@@ -31,15 +32,47 @@ const SERVER_TOOLS = ['pptx-to-pdf', 'slides-to-images', 'docx-to-pdf', 'xlsx-to
 export async function createApp() {
   const { bin: soffice, version } = await resolveLibreOffice()
   const alive = version !== null
+  const compressor = await resolvePdfCompressor()
   const app = express()
   app.disable('x-powered-by')
+  if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY)
+
+  // Security headers on every response (helmet-equivalent, hand-rolled to keep deps small).
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('Referrer-Policy', 'no-referrer')
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+    next()
+  })
+
+  // CORS only when an explicit allowlist origin is configured (same-origin by default).
+  const allowedOrigin = process.env.ALLOWED_ORIGIN
+  if (allowedOrigin) {
+    app.use((req, res, next) => {
+      if (req.headers.origin === allowedOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+        res.setHeader('Vary', 'Origin')
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST')
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+          return res.sendStatus(204)
+        }
+      }
+      next()
+    })
+  }
 
   // Tiny in-memory rate limit: 30 conversions / 10 min / IP.
+  // Single-instance only — put a shared limiter in front for multi-instance deploys.
   const hits = new Map()
   const rateLimit = (req, res, next) => {
     const now = Date.now()
     const list = (hits.get(req.ip) ?? []).filter((t) => now - t < 600_000)
-    if (list.length >= 30) return res.status(429).json({ error: 'Too many conversions — please wait a few minutes.' })
+    if (list.length >= 30) {
+      res.setHeader('Retry-After', '600')
+      return res.status(429).json({ error: 'Too many conversions — please wait a few minutes.' })
+    }
     list.push(now); hits.set(req.ip, list); next()
   }
 
@@ -55,11 +88,18 @@ export async function createApp() {
       version: alive ? version : null,
       tools: alive ? SERVER_TOOLS : [],
       ...(alive ? {} : { installHint: INSTALL_HINT }),
+      pdfCompressor: compressor.bin !== null,
+      compressor: compressor.version,
     })
   })
 
   const requireSoffice = (_req, res, next) => {
     if (!alive) return res.status(503).json({ error: INSTALL_HINT })
+    next()
+  }
+
+  const requireCompressor = (_req, res, next) => {
+    if (!compressor.bin) return res.status(503).json({ error: COMPRESS_HINT })
     next()
   }
 
@@ -155,19 +195,54 @@ export async function createApp() {
     })
   })
 
+  app.post('/api/convert/compress-pdf', rateLimit, requireCompressor, upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' })
+    if (!/\.pdf$/i.test(req.file.originalname)) return res.status(400).json({ error: 'Expected a .pdf file.' })
+    if (req.file.buffer.subarray(0, 4).toString('latin1') !== '%PDF') {
+      return res.status(400).json({ error: 'This file does not appear to be a valid PDF (bad file signature).' })
+    }
+    const level = ['less', 'recommended', 'extreme'].includes(req.body?.level) ? req.body.level : 'recommended'
+    const jobDir = path.join(TMP_ROOT, randomUUID())
+    await mkdir(jobDir, { recursive: true })
+    try {
+      const { writeFile, readFile } = await import('node:fs/promises')
+      const inPath = path.join(jobDir, 'input.pdf')
+      const outPath = path.join(jobDir, 'output.pdf')
+      await writeFile(inPath, req.file.buffer)
+      await compressPdfFile(compressor, inPath, outPath, level, JOB_TIMEOUT_MS)
+      const data = await readFile(outPath)
+      if (!data.length || data.subarray(0, 4).toString('latin1') !== '%PDF') throw new Error('Compressor did not produce a valid PDF.')
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${stem(req.file.originalname)}-compressed.pdf"`)
+      res.setHeader('X-Original-Size', String(req.file.buffer.length))
+      res.setHeader('X-Compressed-Size', String(data.length))
+      res.setHeader('X-Compressor', compressor.kind)
+      res.send(data)
+    } catch (e) {
+      res.status(422).json({ error: e instanceof Error ? e.message : 'Compression failed.' })
+    } finally {
+      await rm(jobDir, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }))
+
   app.use((err, _req, res, _next) => {
     if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File exceeds the 50 MB server limit.' })
+    if (err instanceof SyntaxError) return res.status(400).json({ error: 'Malformed request.' })
     return res.status(500).json({ error: 'Server error.' })
   })
 
-  return { app, alive, version }
+  return { app, alive, version, compressor }
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}` || process.argv[1]?.endsWith('index.js')) {
-  const { app, alive, version } = await createApp()
+  const { app, alive, version, compressor } = await createApp()
   const port = Number(process.env.PORT ?? 8080)
-  app.listen(port, '127.0.0.1', () => {
-    console.log(`DocDoctor conversion service on http://127.0.0.1:${port}`)
+  const host = process.env.HOST ?? '127.0.0.1'
+  app.listen(port, host, () => {
+    console.log(`DocDoctor conversion service on http://${host}:${port}`)
     console.log(alive ? `LibreOffice: ${version} — endpoints: ${SERVER_TOOLS.join(', ')}` : `LibreOffice: NOT found — endpoints return 503. ${INSTALL_HINT}`)
+    console.log(compressor.bin ? `PDF compressor: ${compressor.version} — endpoint: compress-pdf` : 'PDF compressor: NOT found — compress-pdf returns 503.')
   })
 }

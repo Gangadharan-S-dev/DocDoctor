@@ -1,11 +1,19 @@
-import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router'
 import { Search, ShieldCheck, Zap, MousePointerClick, Settings2, Download, Lock, Timer, ArrowRight, FileCheck2 } from 'lucide-react'
-import { CATEGORIES, TOOLS, popularTools } from '../data/tools'
+import { CATEGORIES, TOOLS, popularTools, toolById, type Tool } from '../data/tools'
 import ToolCard from '../components/ToolCard'
+import { getFavorites, getRecent, onPrefsChange } from '../lib/prefs'
+import { useI18n } from '../lib/i18n'
 
 export default function Home() {
   const [q, setQ] = useState('')
+  const [favIds, setFavIds] = useState<string[]>(() => getFavorites())
+  const [recentIds, setRecentIds] = useState<string[]>(() => getRecent())
+  const { t } = useI18n()
+  useEffect(() => onPrefsChange(() => { setFavIds(getFavorites()); setRecentIds(getRecent()) }), [])
+  const favTools = useMemo(() => favIds.map((id) => toolById(id)).filter((x): x is Tool => !!x), [favIds])
+  const recentTools = useMemo(() => recentIds.map((id) => toolById(id)).filter((x): x is Tool => !!x && !favIds.includes(x.id)), [recentIds, favIds])
   const navigate = useNavigate()
   const results = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -16,15 +24,15 @@ export default function Home() {
   return (
     <>
       {/* Hero — left aligned, asymmetric */}
-      <section className="border-b border-slate-200 bg-white">
+      <section className="border-b border-slate-200 bg-white dark:border-slate-700/60 dark:bg-ink-900">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.05fr_.95fr] lg:items-center lg:py-20">
           <div>
-            <p className="text-sm font-extrabold uppercase tracking-widest text-accent">Free online file tools</p>
-            <h1 className="mt-4 font-display text-4xl font-extrabold leading-[1.08] tracking-tight text-ink-950 sm:text-5xl lg:text-[3.4rem]">
-              Every file. Every tool.<br />One place.
+            <p className="text-sm font-extrabold uppercase tracking-widest text-accent">{t('home.kicker')}</p>
+            <h1 className="mt-4 font-display text-4xl font-extrabold leading-[1.08] tracking-tight text-ink-950 dark:text-white sm:text-5xl lg:text-[3.4rem]">
+              {t('home.titleA')}<br />{t('home.titleB')}
             </h1>
-            <p className="mt-5 max-w-lg text-lg leading-relaxed text-slate-600">
-              Compress, convert, edit and manage your files with powerful online tools. Simple, secure and free — no account, no installs.
+            <p className="mt-5 max-w-lg text-lg leading-relaxed text-slate-600 dark:text-slate-300">
+              {t('home.sub')}
             </p>
             <form role="search" className="relative mt-7 max-w-lg" onSubmit={(e) => { e.preventDefault(); navigate(`/tools?q=${encodeURIComponent(q)}`) }}>
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
@@ -64,6 +72,24 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Favorites + recent (local only) */}
+      {(favTools.length > 0 || recentTools.length > 0) && (
+        <section className="mx-auto max-w-7xl px-4 pt-12 sm:px-6" aria-label="Your tools">
+          {favTools.length > 0 && (
+            <>
+              <h2 className="font-display text-xl font-extrabold text-ink-950 dark:text-white">{t('common.favorites')}</h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{favTools.slice(0, 8).map((tool) => <ToolCard key={tool.id} tool={tool} />)}</div>
+            </>
+          )}
+          {recentTools.length > 0 && (
+            <>
+              <h2 className="mt-8 font-display text-xl font-extrabold text-ink-950 dark:text-white">{t('common.recent')}</h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{recentTools.slice(0, 4).map((tool) => <ToolCard key={tool.id} tool={tool} />)}</div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* Categories */}
       <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6" aria-labelledby="cats">

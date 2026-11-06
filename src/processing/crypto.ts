@@ -18,8 +18,8 @@ export async function protectPdf(file: File, password: string): Promise<OutputFi
   try {
     doc = await PDFDocument.load(bytes)
   } catch (e) {
-    if (isEncryptedError(e)) throw new Error('This PDF is already password-protected. Unlock it first, then protect it with a new password.')
-    throw new Error('Could not open this PDF — it may be damaged.')
+    if (isEncryptedError(e)) throw new Error('This PDF is already password-protected. Unlock it first, then protect it with a new password.', { cause: e })
+    throw new Error('Could not open this PDF — it may be damaged.', { cause: e })
   }
   doc.encrypt({ userPassword: password, algorithm: 'AES-256' })
   const out = await doc.save()
@@ -48,10 +48,10 @@ export async function unlockPdf(file: File, password: string): Promise<OutputFil
     opened = await PDFDocument.load(bytes.slice(), { password } as Parameters<typeof PDFDocument.load>[1])
   } catch (e) {
     if (e instanceof Error && /password incorrect/i.test(e.message)) {
-      throw new Error('Incorrect password. DocDoctor can only unlock a PDF with its correct password — it cannot bypass or crack encryption.')
+      throw new Error('Incorrect password. DocDoctor can only unlock a PDF with its correct password — it cannot bypass or crack encryption.', { cause: e })
     }
-    if (isEncryptedError(e)) throw new Error('This PDF is encrypted and the password was not accepted.')
-    throw new Error('Could not open this PDF — it may be damaged or use an unsupported encryption type.')
+    if (isEncryptedError(e)) throw new Error('This PDF is encrypted and the password was not accepted.', { cause: e })
+    throw new Error('Could not open this PDF — it may be damaged or use an unsupported encryption type.', { cause: e })
   }
   // Rebuild into a fresh document so the Encrypt dictionary is dropped.
   const fresh = await PDFDocument.create()

@@ -157,5 +157,75 @@ const isPdf = async (res) => (await res.clone().arrayBuffer()).byteLength > 4 &&
   } finally { child.kill() }
 }
 
+// ── C: PDF compressor forced off -> honest 503 ────────────────
+{
+  const { child, health } = await startServer(18103, { LIBREOFFICE_PATH: 'off', PDF_COMPRESSOR: 'off' })
+  try {
+    check('health reports PDF compressor missing', health.pdfCompressor === false)
+    const doc = await PDFDocument.create()
+    doc.addPage([300, 300])
+    const pdfFile = named(new Blob([await doc.save()]), 'a.pdf', 'application/pdf')
+    const res = await post(18103, 'compress-pdf', pdfFile)
+    const body = await res.json().catch(() => ({}))
+    check('compress-pdf returns 503 (never fake) when no compressor', res.status === 503 && /No PDF compressor is available/i.test(body.error ?? ''))
+  } finally { child.kill() }
+}
+
+{
+  const PC = await import('../server/src/pdf-compress.js')
+  check('compressor probe rejects non-compressor binaries (node.exe)', (await PC.probeCompressor(process.execPath)) === null)
+  check('compressor candidates honor PDF_COMPRESSOR=off', (() => { const prev = process.env.PDF_COMPRESSOR; process.env.PDF_COMPRESSOR = 'off'; const n = PC.compressorCandidates().length; if (prev === undefined) delete process.env.PDF_COMPRESSOR; else process.env.PDF_COMPRESSOR = prev; return n === 0 })())
+}
+
+// ── D: real PDF compression (only when gs/qpdf exists here) ───
+{
+  const { child, health } = await startServer(18105, { LIBREOFFICE_PATH: 'off' })
+  try {
+    if (!health.pdfCompressor) skip('compress-pdf real compression (gs/qpdf not installed)')
+    else {
+      check('health names the compressor', typeof health.compressor === 'string' && health.compressor.length > 0)
+      const doc = await PDFDocument.create()
+      const page = doc.addPage([612, 792])
+      page.drawText('DocDoctor server compression test', { x: 48, y: 700, size: 14 })
+      const pdfFile = named(new Blob([await doc.save()]), 'doc.pdf', 'application/pdf')
+      const res = await post(18105, 'compress-pdf', pdfFile)
+      check('compress-pdf returns a real PDF', res.status === 200 && await isPdf(res.clone()))
+      check('compress-pdf reports sizes', Number(res.headers.get('x-original-size')) > 0 && Number(res.headers.get('x-compressed-size')) > 0)
+      if (res.status === 200) {
+        const out = await PDFDocument.load(await res.arrayBuffer())
+        check('compressed PDF keeps its page (text-preserving pipeline)', out.getPageCount() === 1)
+      }
+      const bad = await post(18105, 'compress-pdf', named(new Blob(['not a pdf']), 'bad.pdf', 'application/pdf'))
+      check('compress-pdf rejects non-PDF input (400)', bad.status === 400)
+
+      // Regression guard: embedded JPEGs must actually shrink (Ghostscript
+      // passes JPEG images through untouched unless told not to).
+      try {
+        const { createCanvas } = await import('../server/node_modules/@napi-rs/canvas/index.js')
+        const cv = createCanvas(1600, 1200)
+        const cx = cv.getContext('2d')
+        const grad = cx.createLinearGradient(0, 0, 1600, 1200)
+        grad.addColorStop(0, '#87b5d9'); grad.addColorStop(1, '#7fb069')
+        cx.fillStyle = grad; cx.fillRect(0, 0, 1600, 1200)
+        for (let i = 0; i < 120; i++) {
+          cx.fillStyle = `rgba(${120 + Math.floor(Math.random() * 120)},110,90,0.5)`
+          cx.beginPath(); cx.arc(Math.random() * 1600, Math.random() * 1200, 20 + Math.random() * 120, 0, Math.PI * 2); cx.fill()
+        }
+        const jpg = await cv.encode('jpeg', 92)
+        const imgDoc = await PDFDocument.create()
+        const imgPage = imgDoc.addPage([612, 792])
+        imgPage.drawImage(await imgDoc.embedJpg(new Uint8Array(jpg)), { x: 0, y: 0, width: 612, height: 792 })
+        imgPage.drawText('Image compression test', { x: 48, y: 756, size: 14 })
+        const imgPdf = named(new Blob([await imgDoc.save()]), 'photo.pdf', 'application/pdf')
+        const form2 = new FormData(); form2.append('file', imgPdf); form2.append('level', 'recommended')
+        const res2 = await fetch('http://127.0.0.1:18105/api/convert/compress-pdf', { method: 'POST', body: form2 })
+        const inSize = Number(res2.headers.get('x-original-size'))
+        const outSize = Number(res2.headers.get('x-compressed-size'))
+        check('compress-pdf actually shrinks an image PDF (>40%)', res2.status === 200 && outSize > 0 && outSize < inSize * 0.6)
+      } catch { skip('compress-pdf image shrink (canvas unavailable)') }
+    }
+  } finally { child.kill() }
+}
+
 console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped`)
 process.exit(fail ? 1 : 0)

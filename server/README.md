@@ -4,8 +4,11 @@ LibreOffice-backed rendering for tools a browser cannot do faithfully:
 **PPTX → PDF**, **Slides → Images**, and full-fidelity **DOCX → PDF** /
 **XLSX → PDF** (the browser versions of the latter two are simplified —
 their pages offer a "Convert with LibreOffice" upgrade whenever this
-service is connected). Everything else in DocDoctor runs 100% in the
-browser and does not need this service.
+service is connected). It also offers real **Compress PDF** via
+Ghostscript (preferred) or qpdf when either is installed: images are
+downsampled per compression level while text stays selectable, unlike
+the browser Extreme mode which rasterizes pages. Everything else in
+DocDoctor runs 100% in the browser and does not need this service.
 
 The web app talks to it at `/api` (proxied in dev/preview — see
 `../vite.config.ts`). Each tool page probes `GET /api/health`; its convert
@@ -41,6 +44,12 @@ Verify any time with: `npm run test:server` (expects `503` until LibreOffice
 is installed, `tools: ["pptx-to-pdf", "slides-to-images"]` in `/api/health`
 afterwards).
 
+Optional PDF compressor: install Ghostscript (`winget install --id
+ArtifexSoftware.Ghostscript`) or qpdf and restart the service — `/api/health`
+then reports `pdfCompressor: true` and the Compress PDF page offers
+"Compress on server". Custom locations: `GHOSTSCRIPT_PATH` / `QPDF_PATH`;
+`PDF_COMPRESSOR=off` disables detection entirely.
+
 ## Behavior & safety
 
 - Every conversion runs in an isolated temp folder (UUID), deleted in a
@@ -56,8 +65,9 @@ afterwards).
 
 | Endpoint | Body | Success | Notes |
 |---|---|---|---|
-| `GET /api/health` | — | `{ ok, libreOffice, version, tools, installHint? }` | Used by the web UI probe; version string verified to be real LibreOffice |
+| `GET /api/health` | — | `{ ok, libreOffice, version, tools, installHint?, pdfCompressor, compressor }` | Used by the web UI probe; versions verified to be real LibreOffice / Ghostscript / qpdf |
 | `POST /api/convert/docx-to-pdf` | multipart `file` (.doc/.docx) | PDF download (verified `%PDF` magic) | 503 without LibreOffice, 422 on bad input |
 | `POST /api/convert/pptx-to-pdf` | multipart `file` (.ppt/.pptx) | PDF download (verified `%PDF` magic) | 503 without LibreOffice, 422 on bad input |
 | `POST /api/convert/xlsx-to-pdf` | multipart `file` (.xls/.xlsx) | PDF download (verified `%PDF` magic) | 503 without LibreOffice, 422 on bad input |
 | `POST /api/convert/slides-to-images` | multipart `file`, `format` = jpg\|png | ZIP of slide images (200% scale) | Rendered via PDF.js + canvas server-side |
+| `POST /api/convert/compress-pdf` | multipart `file` (.pdf), `level` = less\|recommended\|extreme | PDF download (verified `%PDF` magic) + `X-Original-Size` / `X-Compressed-Size` / `X-Compressor` headers | 503 without Ghostscript/qpdf, 400 on bad signature, 422 on failure. Ghostscript downsamples images per level; qpdf only recompresses streams (engine named in `X-Compressor`) |

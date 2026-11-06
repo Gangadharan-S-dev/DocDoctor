@@ -41,14 +41,17 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
 export function PagePlacement({ file, page, x, y, onPick }: {
   file: File; page: number; x: number; y: number; onPick: (x: number, y: number) => void
 }) {
-  const [img, setImg] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [state, setState] = useState<{ file: File; page: number; img: string; done: boolean }>({ file, page, img: '', done: false })
   useEffect(() => {
     let alive = true
-    setLoading(true)
-    file.arrayBuffer().then((b) => renderPageImage(b, page)).then((url) => { if (alive) { setImg(url); setLoading(false) } }).catch(() => { if (alive) setLoading(false) })
+    file.arrayBuffer().then((b) => renderPageImage(b, page))
+      .then((url) => { if (alive) setState({ file, page, img: url, done: true }) })
+      .catch(() => { if (alive) setState({ file, page, img: '', done: true }) })
     return () => { alive = false }
   }, [file, page])
+  const current = state.file === file && state.page === page ? state : { file, page, img: '', done: false }
+  const img = current.img
+  const loading = !current.done
   if (loading) return <p className="flex items-center gap-2 py-8 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Rendering page {page}…</p>
   if (!img) return <p className="py-6 text-sm font-semibold text-red-600">Could not render this page (the file may be encrypted).</p>
   return (

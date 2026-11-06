@@ -1,13 +1,12 @@
 import {
   FileText, Image, FileType2, Presentation, Table2, Archive,
   FileArchive, Scissors, Merge, RotateCw, Lock, Unlock, Hash, Droplets,
-  ShieldCheck, Wrench, PenLine, Stamp, Layers, FlipHorizontal2, Crop,
+  Wrench, PenLine, Stamp, Layers, FlipHorizontal2, Crop,
   Maximize2, RefreshCw, Info, FileImage, FileSpreadsheet, FileCode2,
   Braces, FileJson2, ArrowLeftRight, Eye, type LucideIcon,
 } from 'lucide-react'
 
 export type CategoryId = 'pdf' | 'image' | 'word' | 'powerpoint' | 'excel' | 'other'
-export type ToolStatus = 'in-development' | 'planned'
 
 export interface Category {
   id: CategoryId
@@ -31,7 +30,6 @@ export interface Tool {
   icon: LucideIcon
   popular?: boolean
   phase: 2 | 3 | 4
-  status: ToolStatus
   engine: string
 }
 
@@ -44,49 +42,51 @@ export const CATEGORIES: Category[] = [
   { id: 'other', name: 'Other File Tools', tagline: 'ZIP, text, JSON & more', blurb: 'Archives, data formatting and everyday file utilities in one place.', color: '#6D5DF6', soft: '#EEECFE', icon: Archive },
 ]
 
-const T = (t: Omit<Tool, 'status'>): Tool => ({ ...t, status: 'in-development' })
+const T = (t: Tool): Tool => t
 
 export const TOOLS: Tool[] = [
   // ── PDF (Phase 2) ──────────────────────────────────────────────
-  T({ id: 'compress-pdf', name: 'Compress PDF', description: 'Reduce PDF file size with Extreme, Recommended or Less Compression presets.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileArchive, popular: true, phase: 2, engine: 'Ghostscript + pdf-lib' }),
+  T({ id: 'compress-pdf', name: 'Compress PDF', description: 'Reduce PDF file size with Extreme, Recommended or Less Compression presets.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileArchive, popular: true, phase: 2, engine: 'pdf-lib rebuild (browser)' }),
   T({ id: 'merge-pdf', name: 'Merge PDF', description: 'Combine multiple PDFs into one document, in the order you choose.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: true, icon: Merge, popular: true, phase: 2, engine: 'pdf-lib' }),
   T({ id: 'split-pdf', name: 'Split PDF', description: 'Extract page ranges or split every page into its own file.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Scissors, popular: true, phase: 2, engine: 'pdf-lib' }),
   T({ id: 'remove-pdf-pages', name: 'Remove PDF Pages', description: 'Pick pages visually and delete them from your PDF.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Layers, phase: 2, engine: 'pdf-lib + PDF.js' }),
   T({ id: 'extract-pdf-pages', name: 'Extract PDF Pages', description: 'Save selected pages as a new, smaller PDF.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Scissors, phase: 2, engine: 'pdf-lib + PDF.js' }),
   T({ id: 'organize-pdf', name: 'Organize PDF', description: 'Reorder, rotate and delete pages with drag-and-drop thumbnails.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Layers, popular: true, phase: 2, engine: 'pdf-lib + PDF.js' }),
   T({ id: 'rotate-pdf', name: 'Rotate PDF', description: 'Rotate all pages or individual pages by 90°, 180° or 270°.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: RotateCw, phase: 2, engine: 'pdf-lib' }),
-  T({ id: 'pdf-to-word', name: 'PDF to Word', description: 'Convert PDF documents to editable DOCX files.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, popular: true, phase: 4, engine: 'LibreOffice headless' }),
-  T({ id: 'word-to-pdf', name: 'Word to PDF', description: 'Convert DOC and DOCX documents to PDF.', category: 'pdf', accept: '.doc,.docx', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'LibreOffice headless' }),
+  T({ id: 'pdf-to-word', name: 'PDF to Word', description: 'Convert PDF documents to editable DOCX files.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, popular: true, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
+  T({ id: 'word-to-pdf', name: 'Word to PDF', description: 'Convert DOC and DOCX documents to PDF.', category: 'pdf', accept: '.doc,.docx', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'pdf-to-jpg', name: 'PDF to JPG', description: 'Render each PDF page as a high-quality JPG image.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 2, engine: 'PDF.js canvas' }),
   T({ id: 'pdf-to-png', name: 'PDF to PNG', description: 'Render each PDF page as a lossless PNG image.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 2, engine: 'PDF.js canvas' }),
-  T({ id: 'pdf-to-excel', name: 'PDF to Excel', description: 'Extract tables from PDF into XLSX spreadsheets.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileSpreadsheet, phase: 4, engine: 'LibreOffice headless' }),
-  T({ id: 'pdf-to-powerpoint', name: 'PDF to PowerPoint', description: 'Convert PDF pages into editable PPTX slides.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Presentation, phase: 4, engine: 'LibreOffice headless' }),
+  T({ id: 'pdf-to-excel', name: 'PDF to Excel', description: 'Extract tables from PDF into XLSX spreadsheets.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileSpreadsheet, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
+  T({ id: 'pdf-to-powerpoint', name: 'PDF to PowerPoint', description: 'Convert PDF pages into editable PPTX slides.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Presentation, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'pdf-page-numbers', name: 'Add Page Numbers', description: 'Stamp page numbers with position, format and font controls.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Hash, phase: 2, engine: 'pdf-lib' }),
   T({ id: 'pdf-watermark', name: 'Add Watermark', description: 'Add text or image watermarks with opacity and tiling options.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Droplets, phase: 2, engine: 'pdf-lib' }),
-  T({ id: 'protect-pdf', name: 'Protect PDF', description: 'Encrypt your PDF with a password you control.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Lock, phase: 2, engine: 'pdf-lib / qpdf' }),
-  T({ id: 'unlock-pdf', name: 'Unlock PDF', description: 'Remove a password you own or are authorized to remove.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Unlock, phase: 2, engine: 'qpdf' }),
+  T({ id: 'protect-pdf', name: 'Protect PDF', description: 'Encrypt your PDF with a password you control.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Lock, phase: 2, engine: '@cantoo/pdf-lib AES-256 (browser)' }),
+  T({ id: 'unlock-pdf', name: 'Unlock PDF', description: 'Remove a password you own or are authorized to remove.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Unlock, phase: 2, engine: '@cantoo/pdf-lib (browser, password required)' }),
   T({ id: 'edit-pdf', name: 'Edit PDF', description: 'Add text, shapes and annotations directly on the page.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: PenLine, phase: 4, engine: 'pdf-lib + PDF.js' }),
   T({ id: 'sign-pdf', name: 'Sign PDF', description: 'Draw or type a signature and place it on any page.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Stamp, phase: 4, engine: 'pdf-lib + canvas' }),
-  T({ id: 'repair-pdf', name: 'Repair PDF', description: 'Attempt to recover and rebuild damaged PDF files.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Wrench, phase: 4, engine: 'Ghostscript rebuild' }),
+  T({ id: 'repair-pdf', name: 'Repair PDF', description: 'Attempt to recover and rebuild damaged PDF files.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Wrench, phase: 4, engine: 'pdf-lib rebuild (browser)' }),
+  T({ id: 'ocr-pdf', name: 'OCR PDF to Text', description: 'Recognize text in scanned PDFs with on-device OCR in 13 languages. Download plain text, a searchable PDF, or both.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Eye, phase: 4, engine: 'Tesseract.js OCR (browser)' }),
   // ── Image (Phase 2) ────────────────────────────────────────────
-  T({ id: 'compress-image', name: 'Compress Image', description: 'Shrink JPG, PNG and WebP with adjustable quality and batch support.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif,.avif', acceptLabel: 'JPG, PNG, WebP, GIF, AVIF', maxSizeMB: 50, multiple: true, icon: FileArchive, popular: true, phase: 2, engine: 'Sharp (server) / Canvas (browser)' }),
-  T({ id: 'resize-image', name: 'Resize Image', description: 'Set exact width and height, with aspect-ratio lock.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Maximize2, popular: true, phase: 2, engine: 'Sharp' }),
-  T({ id: 'crop-image', name: 'Crop Image', description: 'Crop with a visual editor and preset aspect ratios.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: false, icon: Crop, phase: 2, engine: 'Sharp + canvas editor' }),
-  T({ id: 'jpg-to-png', name: 'JPG to PNG', description: 'Convert JPG images to lossless PNG.', category: 'image', accept: '.jpg,.jpeg', acceptLabel: 'JPG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Sharp' }),
-  T({ id: 'png-to-jpg', name: 'PNG to JPG', description: 'Convert PNG images to compact JPG.', category: 'image', accept: '.png', acceptLabel: 'PNG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Sharp' }),
-  T({ id: 'webp-converter', name: 'WebP Converter', description: 'Convert images to and from modern WebP.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: ArrowLeftRight, phase: 2, engine: 'Sharp' }),
-  T({ id: 'jpg-to-webp', name: 'JPG to WebP', description: 'Convert JPG images to smaller WebP files.', category: 'image', accept: '.jpg,.jpeg', acceptLabel: 'JPG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Sharp' }),
-  T({ id: 'png-to-webp', name: 'PNG to WebP', description: 'Convert PNG images to smaller WebP files.', category: 'image', accept: '.png', acceptLabel: 'PNG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Sharp' }),
-  T({ id: 'rotate-image', name: 'Rotate Image', description: 'Rotate images in 90° steps or fine angles.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: RotateCw, phase: 2, engine: 'Sharp' }),
-  T({ id: 'flip-image', name: 'Flip Image', description: 'Mirror images horizontally or vertically.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FlipHorizontal2, phase: 2, engine: 'Sharp' }),
+  T({ id: 'compress-image', name: 'Compress Image', description: 'Shrink JPG, PNG and WebP with adjustable quality and batch support.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif,.avif', acceptLabel: 'JPG, PNG, WebP, GIF, AVIF', maxSizeMB: 50, multiple: true, icon: FileArchive, popular: true, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'resize-image', name: 'Resize Image', description: 'Set exact width and height, with aspect-ratio lock.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Maximize2, popular: true, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'crop-image', name: 'Crop Image', description: 'Crop with a visual editor and preset aspect ratios.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: false, icon: Crop, phase: 2, engine: 'Canvas editor (browser)' }),
+  T({ id: 'jpg-to-png', name: 'JPG to PNG', description: 'Convert JPG images to lossless PNG.', category: 'image', accept: '.jpg,.jpeg', acceptLabel: 'JPG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'png-to-jpg', name: 'PNG to JPG', description: 'Convert PNG images to compact JPG.', category: 'image', accept: '.png', acceptLabel: 'PNG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'webp-converter', name: 'WebP Converter', description: 'Convert images to and from modern WebP.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: ArrowLeftRight, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'jpg-to-webp', name: 'JPG to WebP', description: 'Convert JPG images to smaller WebP files.', category: 'image', accept: '.jpg,.jpeg', acceptLabel: 'JPG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'png-to-webp', name: 'PNG to WebP', description: 'Convert PNG images to smaller WebP files.', category: 'image', accept: '.png', acceptLabel: 'PNG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'rotate-image', name: 'Rotate Image', description: 'Rotate images in 90° steps or fine angles.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: RotateCw, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'flip-image', name: 'Flip Image', description: 'Mirror images horizontally or vertically.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FlipHorizontal2, phase: 2, engine: 'Canvas (browser)' }),
   T({ id: 'image-to-pdf', name: 'Image to PDF', description: 'Combine images into a single, well-ordered PDF.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FileText, popular: true, phase: 2, engine: 'pdf-lib' }),
   T({ id: 'pdf-to-image', name: 'PDF to Image', description: 'Render PDF pages as JPG or PNG images.', category: 'image', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 2, engine: 'PDF.js canvas' }),
-  T({ id: 'image-watermark', name: 'Add Image Watermark', description: 'Overlay text or logo watermarks on images.', category: 'image', accept: '.jpg,.jpeg,.png', acceptLabel: 'JPG, PNG', maxSizeMB: 50, multiple: true, icon: Droplets, phase: 2, engine: 'Sharp composite' }),
-  T({ id: 'image-metadata', name: 'Image Metadata Viewer', description: 'Inspect EXIF, dimensions, format and color profile.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif', acceptLabel: 'JPG, PNG, WebP, GIF', maxSizeMB: 50, multiple: false, icon: Info, phase: 2, engine: 'Sharp metadata (browser-safe)' }),
-  T({ id: 'ico-converter', name: 'ICO Converter', description: 'Create multi-size .ico favicons from any image.', category: 'image', accept: '.png,.jpg,.jpeg', acceptLabel: 'PNG, JPG', maxSizeMB: 20, multiple: false, icon: RefreshCw, phase: 2, engine: 'Sharp + ICO encoder' }),
+  T({ id: 'image-watermark', name: 'Add Image Watermark', description: 'Overlay text or logo watermarks on images.', category: 'image', accept: '.jpg,.jpeg,.png', acceptLabel: 'JPG, PNG', maxSizeMB: 50, multiple: true, icon: Droplets, phase: 2, engine: 'Canvas composite (browser)' }),
+  T({ id: 'image-metadata', name: 'Image Metadata Viewer', description: 'Inspect EXIF, dimensions, format and color profile.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif', acceptLabel: 'JPG, PNG, WebP, GIF', maxSizeMB: 50, multiple: false, icon: Info, phase: 2, engine: 'Canvas + File API (browser)' }),
+  T({ id: 'ico-converter', name: 'ICO Converter', description: 'Create multi-size .ico favicons from any image.', category: 'image', accept: '.png,.jpg,.jpeg', acceptLabel: 'PNG, JPG', maxSizeMB: 20, multiple: false, icon: RefreshCw, phase: 2, engine: 'Canvas + ICO encoder (browser)' }),
+  T({ id: 'image-ocr', name: 'Image to Text (OCR)', description: 'Extract text from photos and screenshots with on-device OCR in 13 languages, as plain text or a searchable PDF.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: false, icon: Eye, phase: 4, engine: 'Tesseract.js OCR (browser)' }),
   // ── Word (Phase 3) ─────────────────────────────────────────────
-  T({ id: 'docx-to-pdf', name: 'DOCX to PDF', description: 'Convert Word documents to PDF with layout preserved.', category: 'word', accept: '.docx,.doc', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'LibreOffice headless' }),
-  T({ id: 'pdf-to-docx', name: 'PDF to DOCX', description: 'Convert PDFs back to editable Word documents.', category: 'word', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, phase: 4, engine: 'LibreOffice headless' }),
+  T({ id: 'docx-to-pdf', name: 'DOCX to PDF', description: 'Convert Word documents to PDF with layout preserved.', category: 'word', accept: '.docx,.doc', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
+  T({ id: 'pdf-to-docx', name: 'PDF to DOCX', description: 'Convert PDFs back to editable Word documents.', category: 'word', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'remove-word-pages', name: 'Remove Word Sections', description: 'Word files have no fixed pages — pagination depends on fonts and layout. Safely remove whole sections, paragraphs or tables by content instead.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Layers, phase: 3, engine: 'DOCX content surgery (browser)' }),
   T({ id: 'merge-word', name: 'Merge Word', description: 'Combine several DOCX files into one document.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: true, icon: Merge, phase: 3, engine: 'docx structured merge' }),
   T({ id: 'split-word', name: 'Split Word', description: 'Split a DOCX by sections or heading ranges.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: Scissors, phase: 3, engine: 'docx structured split' }),
@@ -96,8 +96,8 @@ export const TOOLS: Tool[] = [
   T({ id: 'word-to-html', name: 'Word to HTML', description: 'Convert DOCX to clean, semantic HTML.', category: 'word', accept: '.docx', acceptLabel: 'DOCX', maxSizeMB: 50, multiple: false, icon: FileCode2, phase: 3, engine: 'mammoth' }),
   T({ id: 'extract-word-text', name: 'Extract Word Text', description: 'Pull raw text with headings and lists preserved.', category: 'word', accept: '.docx,.doc', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: Eye, phase: 3, engine: 'mammoth extract' }),
   // ── PowerPoint (Phase 3) ───────────────────────────────────────
-  T({ id: 'pptx-to-pdf', name: 'PPTX to PDF', description: 'Convert presentations to PDF, one slide per page.', category: 'powerpoint', accept: '.pptx,.ppt', acceptLabel: 'PPT / PPTX', maxSizeMB: 100, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'LibreOffice headless' }),
-  T({ id: 'pdf-to-pptx', name: 'PDF to PPTX', description: 'Turn PDF pages into presentation slides.', category: 'powerpoint', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Presentation, phase: 4, engine: 'LibreOffice headless' }),
+  T({ id: 'pptx-to-pdf', name: 'PPTX to PDF', description: 'Convert presentations to PDF, one slide per page.', category: 'powerpoint', accept: '.pptx,.ppt', acceptLabel: 'PPT / PPTX', maxSizeMB: 100, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
+  T({ id: 'pdf-to-pptx', name: 'PDF to PPTX', description: 'Turn PDF pages into presentation slides.', category: 'powerpoint', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: Presentation, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'compress-powerpoint', name: 'Compress PowerPoint', description: 'Shrink decks by optimizing embedded media.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: FileArchive, phase: 3, engine: 'ZIP re-pack + media optimize' }),
   T({ id: 'merge-presentations', name: 'Merge Presentations', description: 'Combine slides from multiple decks into one.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: true, icon: Merge, phase: 3, engine: 'PptxGenJS / OOXML' }),
   T({ id: 'split-presentations', name: 'Split Presentation', description: 'Split a deck into one file per slide or range.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: Scissors, phase: 3, engine: 'OOXML slide split' }),
@@ -106,7 +106,7 @@ export const TOOLS: Tool[] = [
   T({ id: 'reorder-slides', name: 'Reorder Slides', description: 'Drag slides into a new order and download.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: Layers, phase: 3, engine: 'OOXML + thumbnails' }),
   T({ id: 'slides-to-images', name: 'Slides to Images', description: 'Export every slide as JPG or PNG.', category: 'powerpoint', accept: '.pptx,.ppt', acceptLabel: 'PPT / PPTX', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 3, engine: 'LibreOffice + render' }),
   // ── Excel (Phase 3) ────────────────────────────────────────────
-  T({ id: 'xlsx-to-pdf', name: 'XLSX to PDF', description: 'Convert workbooks to print-ready PDF.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileText, phase: 3, engine: 'LibreOffice headless' }),
+  T({ id: 'xlsx-to-pdf', name: 'XLSX to PDF', description: 'Convert workbooks to print-ready PDF.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileText, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'xls-to-xlsx', name: 'XLS to XLSX', description: 'Upgrade legacy .xls workbooks to modern .xlsx.', category: 'excel', accept: '.xls', acceptLabel: 'XLS', maxSizeMB: 50, multiple: false, icon: RefreshCw, phase: 3, engine: 'SheetJS' }),
   T({ id: 'csv-to-excel', name: 'CSV to Excel', description: 'Convert CSV data into a formatted XLSX workbook.', category: 'excel', accept: '.csv', acceptLabel: 'CSV', maxSizeMB: 20, multiple: false, icon: FileSpreadsheet, phase: 3, engine: 'SheetJS' }),
   T({ id: 'excel-to-csv', name: 'Excel to CSV', description: 'Export worksheets to CSV, one file per sheet.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileSpreadsheet, phase: 3, engine: 'SheetJS' }),
@@ -115,7 +115,7 @@ export const TOOLS: Tool[] = [
   T({ id: 'remove-worksheets', name: 'Remove Worksheets', description: 'Delete selected sheets from a workbook.', category: 'excel', accept: '.xlsx', acceptLabel: 'XLSX', maxSizeMB: 50, multiple: false, icon: Layers, phase: 3, engine: 'SheetJS' }),
   T({ id: 'compress-excel', name: 'Compress Excel', description: 'Reduce workbook size without touching formulas.', category: 'excel', accept: '.xlsx', acceptLabel: 'XLSX', maxSizeMB: 50, multiple: false, icon: FileArchive, phase: 3, engine: 'ZIP re-pack' }),
   T({ id: 'excel-to-html', name: 'Excel to HTML', description: 'Publish worksheets as clean HTML tables.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileCode2, phase: 3, engine: 'SheetJS' }),
-  T({ id: 'excel-to-pdf', name: 'Excel to PDF', description: 'Convert spreadsheets to PDF with print settings.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileText, phase: 3, engine: 'LibreOffice headless' }),
+  T({ id: 'excel-to-pdf', name: 'Excel to PDF', description: 'Convert spreadsheets to PDF with print settings.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileText, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   // ── Other (Phase 3–4) ──────────────────────────────────────────
   T({ id: 'zip-files', name: 'Create ZIP', description: 'Bundle multiple files into a single ZIP archive.', category: 'other', accept: '*', acceptLabel: 'Any file', maxSizeMB: 200, multiple: true, icon: FileArchive, phase: 3, engine: 'JSZip / Archiver' }),
   T({ id: 'extract-zip', name: 'Extract ZIP', description: 'Safely unpack ZIP archives — path traversal blocked.', category: 'other', accept: '.zip', acceptLabel: 'ZIP', maxSizeMB: 200, multiple: false, icon: Archive, phase: 3, engine: 'JSZip (safe extract)' }),
@@ -152,6 +152,7 @@ export const IMPLEMENTED_IDS = new Set([
   // Server-gated only: pptx-to-pdf + slides-to-images (LibreOffice service).
   'protect-pdf', 'unlock-pdf', 'remove-word-pages',
   'pdf-to-powerpoint', 'pdf-to-pptx', 'word-to-pdf', 'docx-to-pdf', 'epub-to-pdf',
+  'ocr-pdf', 'image-ocr',
 ])
 export const isImplemented = (t: Tool) => IMPLEMENTED_IDS.has(t.id)
 

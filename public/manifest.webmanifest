@@ -1,0 +1,14 @@
+{
+  "name": "DocDoctor — Every file. Every tool. One place.",
+  "short_name": "DocDoctor",
+  "description": "Compress, convert, edit and manage PDF, image, Word, PowerPoint and Excel files. Free, private, no sign-up.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0B1526",
+  "theme_color": "#0B1526",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

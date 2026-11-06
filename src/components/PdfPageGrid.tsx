@@ -8,21 +8,28 @@ export default function PdfPageGrid({ file, mode, onChange }: {
   mode: 'select' | 'organize'
   onChange: (value: number[] | PageOp[]) => void
 }) {
-  const [thumbs, setThumbs] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [ops, setOps] = useState<PageOp[]>([])
+  const [loaded, setLoaded] = useState<{ file: File; thumbs: string[]; error: string }>({ file, thumbs: [], error: '' })
+  const [selState, setSelState] = useState<{ file: File; sel: Set<number> }>({ file, sel: new Set() })
+  const [opsState, setOpsState] = useState<{ file: File; ops: PageOp[] }>({ file, ops: [] })
 
   useEffect(() => {
     let alive = true
-    setLoading(true); setError(''); setSelected(new Set()); setOps([])
     file.arrayBuffer()
       .then((b) => renderThumbnails(b))
-      .then((urls) => { if (!alive) return; setThumbs(urls); setOps(urls.map((_, i) => ({ index: i, rotation: 0, deleted: false }))); setLoading(false) })
-      .catch(() => { if (alive) { setError('Could not render this PDF (it may be encrypted or damaged).'); setLoading(false) } })
+      .then((urls) => { if (alive) setLoaded({ file, thumbs: urls, error: '' }) })
+      .catch(() => { if (alive) setLoaded({ file, thumbs: [], error: 'Could not render this PDF (it may be encrypted or damaged).' }) })
     return () => { alive = false }
   }, [file])
+
+  const current = loaded.file === file ? loaded : { file, thumbs: [], error: '' }
+  const thumbs = current.thumbs
+  const error = current.error
+  const loading = loaded.file !== file || (thumbs.length === 0 && !error)
+  const selected = selState.file === file ? selState.sel : new Set<number>()
+  const setSelected = (next: Set<number>) => setSelState({ file, sel: next })
+  const defaultOps = thumbs.map((_, i) => ({ index: i, rotation: 0, deleted: false }))
+  const ops = opsState.file === file && opsState.ops.length === thumbs.length ? opsState.ops : defaultOps
+  const setOps = (fn: (o: PageOp[]) => PageOp[]) => setOpsState({ file, ops: fn(ops) })
 
   useEffect(() => { if (mode === 'select') onChange([...selected].sort((a, b) => a - b)) }, [selected, mode]) // eslint-disable-line
   useEffect(() => { if (mode === 'organize') onChange(ops) }, [ops, mode]) // eslint-disable-line
@@ -30,7 +37,7 @@ export default function PdfPageGrid({ file, mode, onChange }: {
   if (loading) return <p className="flex items-center gap-2 py-8 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Rendering page thumbnails…</p>
   if (error) return <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200">{error}</p>
 
-  const toggle = (i: number) => setSelected((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n })
+  const toggle = (i: number) => { const n = new Set(selected); if (n.has(i)) n.delete(i); else n.add(i); setSelected(n) }
   const move = (pos: number, dir: -1 | 1) => setOps((o) => { const n = [...o]; const t = pos + dir; if (t < 0 || t >= n.length) return o; [n[pos], n[t]] = [n[t], n[pos]]; return n })
 
   return (
