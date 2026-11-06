@@ -3,6 +3,7 @@ import { Link, NavLink, useNavigate } from 'react-router'
 import { Stethoscope, Menu, X, Search, ShieldCheck, ChevronDown, Moon, Sun } from 'lucide-react'
 import { CATEGORIES } from '../data/tools'
 import { LANGS, useI18n, type Lang } from '../lib/i18n'
+import DeveloperContact from './DeveloperContact'
 
 export function Logo() {
   return (
@@ -112,6 +113,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span className="ml-auto inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Auto-delete after processing · Max retention 60 min</span>
           </div>
         </div>
+        <DeveloperContact />
       </footer>
     </div>
   )
