@@ -9,15 +9,67 @@ export const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordproc
 export const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 export const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
-// ── Shared: recompress any OOXML/ZIP package at max DEFLATE ──────
+// ── Shared: recompress any OOXML/ZIP package at max DEFLATE with media optimization ──
 export async function recompressPackage(file: File, outName: string, type: string): Promise<OutputFile> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
   const out = new JSZip()
+  const canRecompress = typeof document !== 'undefined' && typeof createImageBitmap !== 'undefined'
+
   for (const [path, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue
-    out.file(path, await entry.async('uint8array'))
+    const isMediaImage = /\/media\/[^/]+\.(jpe?g|png)$/i.test(path)
+    const oldBytes = await entry.async('uint8array')
+
+    if (isMediaImage && canRecompress && oldBytes.length > 20_000) {
+      try {
+        const isJpeg = /\.jpe?g$/i.test(path)
+        const mime = isJpeg ? 'image/jpeg' : 'image/png'
+        const bmp = await createImageBitmap(new Blob([oldBytes.slice().buffer as ArrayBuffer], { type: mime }))
+        let w = bmp.width, h = bmp.height
+        const maxEdge = 1600
+        if (Math.max(w, h) > maxEdge) {
+          const s = maxEdge / Math.max(w, h)
+          w = Math.max(1, Math.round(w * s))
+          h = Math.max(1, Math.round(h * s))
+        }
+        const c = document.createElement('canvas')
+        c.width = w
+        c.height = h
+        const ctx = c.getContext('2d')
+        if (ctx) {
+          if (isJpeg) {
+            ctx.fillStyle = '#ffffff'
+            ctx.fillRect(0, 0, w, h)
+          }
+          ctx.drawImage(bmp, 0, 0, w, h)
+          bmp.close()
+          // Recompress media JPEGs at 0.68; keep PNG format for transparent PNGs
+          const outMime = isJpeg ? 'image/jpeg' : 'image/png'
+          const newBlob = await new Promise<Blob | null>((res) => c.toBlob(res, outMime, isJpeg ? 0.68 : undefined))
+          if (newBlob) {
+            const newBytes = new Uint8Array(await newBlob.arrayBuffer())
+            if (newBytes.length < oldBytes.length * 0.90) {
+              out.file(path, newBytes)
+              continue
+            }
+          }
+        } else {
+          bmp.close()
+        }
+      } catch {
+        // Fall back to original bytes on media parse failure
+      }
+    }
+
+    out.file(path, oldBytes)
   }
+
   const blob = await out.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } })
+
+  // Guarantee: Never return a file larger than input
+  if (blob.size >= file.size) {
+    return { name: outName, blob: file }
+  }
   return { name: outName, blob: new Blob([blob], { type }) }
 }
 
@@ -598,18 +650,23 @@ export async function excelToHtml(file: File): Promise<OutputFile> {
 }
 
 /** Values-only PDF: renders each sheet as a simple text table (print styling is not preserved). */
-export async function excelToPdf(file: File): Promise<OutputFile> {
+export async function excelToPdf(file: File, opts: { orientation?: 'landscape' | 'portrait' } = {}): Promise<OutputFile> {
   const wb = await readWorkbook(file)
   const doc = await PDFDocument.create()
   const font = await doc.embedFont(StandardFonts.Courier)
+  const isLandscape = opts.orientation !== 'portrait'
+  const pageSize: [number, number] = isLandscape ? [842, 595] : [595, 842]
+  const pageH = pageSize[1]
+  const maxLineLen = isLandscape ? 118 : 78
+
   for (const name of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '' })
-    let page = doc.addPage([842, 595])
-    page.drawText(name, { x: 36, y: 555, size: 13, font, color: rgb(0.1, 0.12, 0.2) })
-    let y = 530
+    let page = doc.addPage(pageSize)
+    page.drawText(name, { x: 36, y: pageH - 40, size: 13, font, color: rgb(0.1, 0.12, 0.2) })
+    let y = pageH - 65
     for (const row of rows.slice(0, 200)) {
-      if (y < 36) { page = doc.addPage([842, 595]); y = 555 }
-      const line = row.map((c) => String(c ?? '').slice(0, 24)).join('  |  ').slice(0, 118)
+      if (y < 36) { page = doc.addPage(pageSize); y = pageH - 40 }
+      const line = row.map((c) => String(c ?? '').slice(0, 24)).join('  |  ').slice(0, maxLineLen)
       page.drawText(line || ' ', { x: 36, y, size: 8, font, color: rgb(0.2, 0.2, 0.25) })
       y -= 13
     }

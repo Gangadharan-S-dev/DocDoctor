@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, degrees, rgb, StandardFonts, PDFName, PDFNumber, PDFRawStream } from 'pdf-lib'
 import type { OutputFile } from './download'
 import { stem } from './download'
 
@@ -116,27 +116,84 @@ export function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException('Processing cancelled.', 'AbortError')
 }
 
-export async function compressPdf(file: File, level: 'less' | 'recommended' | 'extreme', opts: ProcessOpts = {}): Promise<OutputFile> {
-  if (level === 'extreme') return rasterizePdf(file, opts)
-  const src = await load(await file.arrayBuffer())
-  const doc = await PDFDocument.create()
-  ;(await doc.copyPages(src, src.getPageIndices())).forEach((p) => doc.addPage(p))
-  if (level !== 'less') {
-    doc.setTitle(''); doc.setAuthor(''); doc.setSubject(''); doc.setKeywords([]); doc.setProducer('DocDoctor'); doc.setCreator('DocDoctor')
+/**
+ * Recompress embedded JPEG images directly in the PDF object streams.
+ * Leaves text, vector graphics, fonts, and bookmarks intact.
+ */
+async function recompressEmbeddedImages(
+  doc: PDFDocument,
+  quality: number,
+  maxEdge: number,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (typeof document === 'undefined' || typeof createImageBitmap === 'undefined') return 0
+  let savedBytes = 0
+
+  for (const [ref, obj] of doc.context.enumerateIndirectObjects()) {
+    throwIfAborted(signal)
+    if (!(obj instanceof PDFRawStream)) continue
+    const subtype = obj.dict.get(PDFName.of('Subtype'))
+    if (!subtype || subtype.toString() !== '/Image') continue
+
+    const filter = obj.dict.get(PDFName.of('Filter'))
+    const filterStr = filter ? filter.toString() : ''
+    const isJpeg = /DCTDecode|DCT/i.test(filterStr)
+    if (!isJpeg) continue
+
+    const oldBytes = obj.getContents()
+    if (!oldBytes || oldBytes.length < 4_000) continue
+
+    try {
+      const blob = new Blob([oldBytes.slice().buffer as ArrayBuffer], { type: 'image/jpeg' })
+      const bmp = await createImageBitmap(blob)
+      let w = bmp.width, h = bmp.height
+      if (maxEdge && Math.max(w, h) > maxEdge) {
+        const s = maxEdge / Math.max(w, h)
+        w = Math.max(1, Math.round(w * s))
+        h = Math.max(1, Math.round(h * s))
+      }
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')
+      if (!ctx) {
+        bmp.close()
+        continue
+      }
+      ctx.drawImage(bmp, 0, 0, w, h)
+      bmp.close()
+
+      const newBlob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', quality))
+      if (!newBlob) continue
+      const newBytes = new Uint8Array(await newBlob.arrayBuffer())
+
+      if (newBytes.length < oldBytes.length * 0.95) {
+        obj.dict.set(PDFName.of('Width'), PDFNumber.of(w))
+        obj.dict.set(PDFName.of('Height'), PDFNumber.of(h))
+        const newStream = PDFRawStream.of(obj.dict, newBytes)
+        doc.context.assign(ref, newStream)
+        savedBytes += (oldBytes.length - newBytes.length)
+      }
+    } catch {
+      // Ignore individual image stream failures gracefully
+    }
   }
-  const bytes = await doc.save({ useObjectStreams: level !== 'less', addDefaultPage: false })
-  return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(bytes) }
+  return savedBytes
 }
 
 /**
- * Extreme compression: rasterize each page to a downsampled JPEG and rebuild.
- * This is the only browser technique that reliably shrinks scanned/image-heavy
- * PDFs. Trade-off (disclosed in the UI): text becomes part of the page image.
+ * Extreme / fallback compression: rasterize each page to a downsampled JPEG and rebuild.
+ * Useful for scanned documents where text is already image-based or vector stream is uncompressible.
  */
-async function rasterizePdf(file: File, opts: ProcessOpts): Promise<OutputFile> {
+async function rasterizePdf(
+  file: File,
+  opts: ProcessOpts,
+  quality = 0.58,
+  dpi = 100,
+): Promise<OutputFile> {
   const pdf = await loadPdfJs(await file.arrayBuffer())
   const doc = await PDFDocument.create()
-  const scale = 1.6 // ~115 dpi — readable, far smaller than typical 300 dpi scans
+  const scale = dpi / 72
   for (let i = 1; i <= pdf.numPages; i++) {
     throwIfAborted(opts.signal)
     const page = await pdf.getPage(i)
@@ -146,7 +203,7 @@ async function rasterizePdf(file: File, opts: ProcessOpts): Promise<OutputFile> 
     const ctx = c.getContext('2d')!
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height)
     await page.render({ canvas: c, viewport: vp }).promise
-    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), 'image/jpeg', 0.72))
+    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), 'image/jpeg', quality))
     const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()))
     const p = doc.addPage([vp.width / scale, vp.height / scale])
     p.drawImage(img, { x: 0, y: 0, width: p.getWidth(), height: p.getHeight() })
@@ -155,31 +212,170 @@ async function rasterizePdf(file: File, opts: ProcessOpts): Promise<OutputFile> 
   }
   closePdf(pdf)
   doc.setProducer('DocDoctor'); doc.setCreator('DocDoctor')
-  return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(await doc.save({ useObjectStreams: true })) }
+  const bytes = await doc.save({ useObjectStreams: true })
+
+  // Guarantee: Never return a file larger than input
+  if (bytes.byteLength >= file.size) {
+    return { name: `${stem(file.name)}-compressed.pdf`, blob: file }
+  }
+  return { name: `${stem(file.name)}-compressed.pdf`, blob: pdfBlob(bytes) }
 }
 
-export async function addPageNumbers(file: File, position: 'bottom-center' | 'bottom-right' | 'bottom-left', start: number, fmt: string): Promise<OutputFile> {
+export async function compressPdf(
+  file: File,
+  level: 'less' | 'recommended' | 'extreme',
+  opts: ProcessOpts = {},
+): Promise<OutputFile> {
+  // Extreme mode: Try aggressive rasterization (smallest file for scans/decks),
+  // compare with aggressive in-place recompression, and return whichever is smaller.
+  if (level === 'extreme') {
+    let rasterCandidate: OutputFile | null = null
+    if (typeof document !== 'undefined') {
+      try {
+        const r = await rasterizePdf(file, opts, 0.42, 72)
+        if (r.blob.size < file.size) rasterCandidate = r
+      } catch {
+        // ignore
+      }
+    }
+
+    // Also try aggressive in-place stream recompression
+    try {
+      const src = await load(await file.arrayBuffer())
+      await recompressEmbeddedImages(src, 0.45, 1000, opts.signal)
+      src.setTitle(''); src.setAuthor(''); src.setSubject(''); src.setKeywords([]); src.setProducer('DocDoctor'); src.setCreator('DocDoctor')
+      const inPlaceBytes = await src.save({ useObjectStreams: true, addDefaultPage: false })
+      if (inPlaceBytes.byteLength < file.size) {
+        const inPlaceBlob = pdfBlob(inPlaceBytes)
+        if (!rasterCandidate || inPlaceBlob.size < rasterCandidate.blob.size) {
+          return { name: `${stem(file.name)}-compressed.pdf`, blob: inPlaceBlob }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (rasterCandidate) return rasterCandidate
+    return { name: `${stem(file.name)}-compressed.pdf`, blob: file }
+  }
+
+  // Recommended & Less modes:
+  const src = await load(await file.arrayBuffer())
+  const q = level === 'less' ? 0.72 : 0.58
+  const maxEdge = level === 'less' ? 2000 : 1400
+
+  // 1. Recompress embedded images directly in the PDF streams
+  await recompressEmbeddedImages(src, q, maxEdge, opts.signal)
+
+  // 2. Strip metadata overhead from info dictionary
+  try {
+    src.setTitle('')
+    src.setAuthor('')
+    src.setSubject('')
+    src.setKeywords([])
+    src.setProducer('DocDoctor')
+    src.setCreator('DocDoctor')
+  } catch {
+    // ignore
+  }
+
+  // 3. Save with object streams
+  const bytes = await src.save({ useObjectStreams: true, addDefaultPage: false })
+  const inPlaceBlob = bytes.byteLength < file.size ? pdfBlob(bytes) : null
+
+  // 4. In recommended mode, if in-place compression achieved < 25% savings
+  // (e.g. scanned documents with uncompressed or flate raster streams),
+  // compare against adaptive page rasterization and choose whichever is smaller.
+  if (level === 'recommended' && typeof document !== 'undefined') {
+    const savings = inPlaceBlob ? (file.size - inPlaceBlob.size) / file.size : 0
+    if (savings < 0.25) {
+      try {
+        const rasterized = await rasterizePdf(file, opts, 0.50, 85)
+        if (rasterized.blob.size < file.size) {
+          if (!inPlaceBlob || rasterized.blob.size < inPlaceBlob.size) {
+            return rasterized
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (inPlaceBlob) {
+    return { name: `${stem(file.name)}-compressed.pdf`, blob: inPlaceBlob }
+  }
+
+  // 5. Absolute guarantee: If no compression technique could make it smaller
+  // (e.g. file is already heavily optimized or tiny), NEVER return a file larger than input.
+  return { name: `${stem(file.name)}-compressed.pdf`, blob: file }
+}
+
+export interface PageNumberOpts {
+  fontSize?: number
+  colorHex?: string
+  skipCover?: boolean
+}
+
+export async function addPageNumbers(
+  file: File,
+  position: 'bottom-center' | 'bottom-right' | 'bottom-left',
+  start: number,
+  fmt: string,
+  opts?: PageNumberOpts,
+): Promise<OutputFile> {
   const doc = await load(await file.arrayBuffer())
   const font = await doc.embedFont(StandardFonts.Helvetica)
+  const size = opts?.fontSize ?? 10
+  const hex = (opts?.colorHex ?? '#596173').replace('#', '')
+  const col = rgb(
+    parseInt(hex.slice(0, 2), 16) / 255,
+    parseInt(hex.slice(2, 4), 16) / 255,
+    parseInt(hex.slice(4, 6), 16) / 255
+  )
+  const skipCover = opts?.skipCover ?? false
+  const total = doc.getPageCount()
+
   doc.getPages().forEach((page, i) => {
-    const label = fmt.replace('{n}', String(start + i)).replace('{total}', String(doc.getPageCount()))
+    if (skipCover && i === 0) return
+    const num = skipCover ? start + i - 1 : start + i
+    const effectiveTotal = skipCover ? total - 1 : total
+    const label = fmt.replace('{n}', String(num)).replace('{total}', String(effectiveTotal))
     const { width } = page.getSize()
-    const w = font.widthOfTextAtSize(label, 10)
+    const w = font.widthOfTextAtSize(label, size)
     const x = position === 'bottom-center' ? (width - w) / 2 : position === 'bottom-right' ? width - w - 36 : 36
-    page.drawText(label, { x, y: 24, size: 10, font, color: rgb(0.35, 0.38, 0.45) })
+    page.drawText(label, { x, y: 24, size, font, color: col })
   })
   return { name: `${stem(file.name)}-numbered.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
-export async function watermarkPdf(file: File, text: string, opacity: number, size: number): Promise<OutputFile> {
+export interface PdfWatermarkOpts {
+  angle?: number
+  colorHex?: string
+}
+
+export async function watermarkPdf(
+  file: File,
+  text: string,
+  opacity: number,
+  size: number,
+  opts?: PdfWatermarkOpts,
+): Promise<OutputFile> {
   const doc = await load(await file.arrayBuffer())
   const font = await doc.embedFont(StandardFonts.HelveticaBold)
+  const angle = opts?.angle ?? -30
+  const hex = (opts?.colorHex ?? '#73738c').replace('#', '')
+  const col = rgb(
+    parseInt(hex.slice(0, 2), 16) / 255,
+    parseInt(hex.slice(2, 4), 16) / 255,
+    parseInt(hex.slice(4, 6), 16) / 255
+  )
   for (const page of doc.getPages()) {
     const { width, height } = page.getSize()
     page.drawText(text, {
       x: width / 2 - font.widthOfTextAtSize(text, size) / 2,
       y: height / 2,
-      size, font, color: rgb(0.45, 0.45, 0.55), opacity, rotate: degrees(-30),
+      size, font, color: col, opacity, rotate: degrees(angle),
     })
   }
   return { name: `${stem(file.name)}-watermarked.pdf`, blob: pdfBlob(await doc.save()) }

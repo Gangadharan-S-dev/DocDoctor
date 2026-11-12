@@ -210,8 +210,26 @@ export async function createApp() {
       const outPath = path.join(jobDir, 'output.pdf')
       await writeFile(inPath, req.file.buffer)
       await compressPdfFile(compressor, inPath, outPath, level, JOB_TIMEOUT_MS)
-      const data = await readFile(outPath)
+      let data = await readFile(outPath)
       if (!data.length || data.subarray(0, 4).toString('latin1') !== '%PDF') throw new Error('Compressor did not produce a valid PDF.')
+
+      // If output was larger than input and level was not extreme, try extreme (screen preset) with Ghostscript
+      if (data.length >= req.file.buffer.length && level !== 'extreme' && compressor.kind === 'ghostscript') {
+        try {
+          await compressPdfFile(compressor, inPath, outPath, 'extreme', JOB_TIMEOUT_MS)
+          const extremeData = await readFile(outPath)
+          if (extremeData.length < req.file.buffer.length) {
+            data = extremeData
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Never return a file larger than input
+      if (data.length > req.file.buffer.length) {
+        data = req.file.buffer
+      }
       res.setHeader('Content-Type', 'application/pdf')
       res.setHeader('Content-Disposition', `attachment; filename="${stem(req.file.originalname)}-compressed.pdf"`)
       res.setHeader('X-Original-Size', String(req.file.buffer.length))

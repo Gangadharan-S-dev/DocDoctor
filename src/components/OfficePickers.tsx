@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, ArrowUp, ArrowDown } from 'lucide-react'
+import { Loader2, ArrowUp, ArrowDown, GripVertical } from 'lucide-react'
 import { listSlides, sheetNames, listDocxBlocks, listDocxPages, type SlideInfo, type DocxBlock, type DocxPageInfo } from '../processing/office'
 
 function useLoader<T>(load: () => Promise<T>, dep: File) {
@@ -26,7 +26,8 @@ function useFileSelection<T>(file: File) {
     if (next.has(v)) next.delete(v); else next.add(v)
     return { file, sel: next }
   })
-  return { sel, toggle }
+  const setAll = (next: Set<T>) => setState({ file, sel: next })
+  return { sel, toggle, setAll }
 }
 
 const Err = ({ msg }: { msg: string }) => <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200">{msg}</p>
@@ -35,13 +36,22 @@ const Loading = ({ label }: { label: string }) => <p className="flex items-cente
 /** Checkbox slide picker for remove/extract. Emits selected part names. */
 export function SlidePicker({ file, onChange }: { file: File; onChange: (parts: string[]) => void }) {
   const { data: slides, error } = useLoader<SlideInfo[]>(() => listSlides(file), file)
-  const { sel, toggle } = useFileSelection<string>(file)
+  const { sel, toggle, setAll } = useFileSelection<string>(file)
   useEffect(() => { onChange([...sel]) }, [sel]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!slides) return <Loading label="Reading slides…" />
   return (
     <div>
-      <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {slides.length} slides selected</p>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+        <span className="text-sm font-semibold text-slate-600">{sel.size} of {slides.length} slides selected</span>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setAll(new Set(slides.map((s) => s.part)))} className="text-accent hover:underline">Select all</button>
+          <span className="text-slate-300">|</span>
+          <button type="button" onClick={() => setAll(new Set(slides.map((s) => s.part).filter((p) => !sel.has(p))))} className="text-accent hover:underline">Invert</button>
+          <span className="text-slate-300">|</span>
+          <button type="button" onClick={() => setAll(new Set())} className="text-accent hover:underline">Clear</button>
+        </div>
+      </div>
       <ul className="grid gap-2 sm:grid-cols-2">
         {slides.map((s, i) => (
           <li key={s.part}>
@@ -57,19 +67,44 @@ export function SlidePicker({ file, onChange }: { file: File; onChange: (parts: 
   )
 }
 
-/** Ordered slide list with move buttons for reorder. Emits parts in order. */
+/** Ordered slide list with drag-and-drop and move buttons for reorder. Emits parts in order. */
 export function SlideReorder({ file, onChange }: { file: File; onChange: (parts: string[]) => void }) {
   const { data: slides, error } = useLoader<SlideInfo[]>(() => listSlides(file), file)
   const [moved, setMoved] = useState<{ src: SlideInfo[]; order: SlideInfo[] } | null>(null)
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [dropIdx, setDropIdx] = useState<number | null>(null)
   const order = moved && moved.src === slides ? moved.order : (slides ?? [])
   useEffect(() => { onChange(order.map((s) => s.part)) }, [order]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!slides) return <Loading label="Reading slides…" />
   const move = (i: number, d: -1 | 1) => { const n = [...order]; const t = i + d; if (t < 0 || t >= n.length) return; [n[i], n[t]] = [n[t], n[i]]; setMoved({ src: slides, order: n }) }
+
+  const handleDrop = (target: number) => {
+    if (dragIdx === null || dragIdx === target) return
+    const next = [...order]
+    const [item] = next.splice(dragIdx, 1)
+    next.splice(target, 0, item)
+    setMoved({ src: slides, order: next })
+    setDragIdx(null)
+    setDropIdx(null)
+  }
+
   return (
     <ol className="space-y-2">
       {order.map((s, i) => (
-        <li key={s.part} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <li
+          key={s.part}
+          draggable
+          onDragStart={() => setDragIdx(i)}
+          onDragOver={(e) => { e.preventDefault(); if (dropIdx !== i) setDropIdx(i) }}
+          onDragLeave={() => setDropIdx(null)}
+          onDrop={(e) => { e.preventDefault(); handleDrop(i) }}
+          onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
+          className={`flex items-center gap-3 rounded-xl border bg-white px-4 py-3 transition select-none ${
+            dragIdx === i ? 'opacity-30 bg-slate-100' : ''
+          } ${dropIdx === i && dragIdx !== i ? 'border-accent ring-2 ring-accent/20 bg-accent/5' : 'border-slate-200 hover:border-slate-300'}`}
+        >
+          <GripVertical className="h-4 w-4 cursor-grab active:cursor-grabbing text-slate-400" />
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ink-950 text-xs font-extrabold text-white">{i + 1}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink-950" title={s.title}>{s.title}</span>
           <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
@@ -263,17 +298,25 @@ export const DocxPagePicker = DocxBlockPicker
 /** Checkbox worksheet picker. Emits selected sheet names. */
 export function SheetPicker({ file, onChange }: { file: File; onChange: (names: string[]) => void }) {
   const { data: names, error } = useLoader<string[]>(() => sheetNames(file), file)
-  const { sel, toggle } = useFileSelection<string>(file)
+  const { sel, toggle, setAll } = useFileSelection<string>(file)
   useEffect(() => { onChange([...sel]) }, [sel]) // eslint-disable-line
   if (error) return <Err msg={error} />
   if (!names) return <Loading label="Reading worksheets…" />
   return (
     <div>
-      <p className="mb-3 text-sm font-semibold text-slate-600">{sel.size} of {names.length} worksheets selected</p>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+        <span className="text-sm font-semibold text-slate-600">{sel.size} of {names.length} worksheets selected</span>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setAll(new Set(names))} className="text-accent hover:underline">Select all</button>
+          <span className="text-slate-300">|</span>
+          <button type="button" onClick={() => setAll(new Set())} className="text-accent hover:underline">Clear</button>
+        </div>
+      </div>
       <div className="flex flex-wrap gap-2">
-        {names.map((n) => (
-          <label key={n} className={`flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold transition ${sel.has(n) ? 'border-accent bg-accent-soft text-accent-dark ring-2 ring-accent/20' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-            <input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} className="h-4 w-4 accent-[#1D6FF2]" /> {n}
+        {names.map((n, i) => (
+          <label key={n} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold transition ${sel.has(n) ? 'border-accent bg-accent-soft text-accent-dark ring-2 ring-accent/20' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+            <input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} className="h-4 w-4 accent-[#1D6FF2]" />
+            <span className="text-slate-400 font-mono text-[10px]">#{i + 1}</span> {n}
           </label>
         ))}
       </div>

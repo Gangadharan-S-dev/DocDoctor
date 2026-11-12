@@ -40,6 +40,7 @@ export async function compressImageSmart(file: File, opts: CompressOpts): Promis
       pending.set(id, { resolve, reject })
       const req: CompressRequest = {
         id, buffer: undefined as unknown as ArrayBuffer, name: file.name, type: file.type, quality: opts.quality, format: opts.format,
+        maxEdge: opts.maxEdge, targetSizeKB: opts.targetSizeKB,
       }
       file.arrayBuffer().then((buffer) => {
         req.buffer = buffer
@@ -47,6 +48,9 @@ export async function compressImageSmart(file: File, opts: CompressOpts): Promis
       }, reject)
     })
     if (!res.blob || !res.outType) throw new Error('Worker returned no image.')
+    if (res.blob.size >= file.size && !opts.targetSizeKB) {
+      return { name: `${stem(file.name)}-compressed.${EXT[res.outType] ?? 'jpg'}`, blob: file }
+    }
     return { name: `${stem(file.name)}-compressed.${EXT[res.outType] ?? 'jpg'}`, blob: res.blob }
   } catch {
     return compressImage(file, opts)

@@ -83,10 +83,10 @@ export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promis
 }
 
 // ── JSON / XML ───────────────────────────────────────────────────
-export function formatJson(text: string, minify: boolean): string {
+export function formatJson(text: string, minify: boolean, indent: number | string = 2): string {
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
-  return minify ? JSON.stringify(parsed) : JSON.stringify(parsed, null, 2)
+  return minify ? JSON.stringify(parsed) : JSON.stringify(parsed, null, indent === 'tab' ? '\t' : Number(indent) || 2)
 }
 
 const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -149,7 +149,7 @@ export function parseCsv(text: string, delim = ','): string[][] {
 const csvCell = (s: string, d: string) => (s.includes(d) || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s)
 
 export function csvTools(text: string, action: 'dedupe' | 'trim', delimiter: string): string {
-  let rows = parseCsv(text)
+  let rows = parseCsv(text, delimiter)
   if (action === 'trim') rows = rows.map((r) => r.map((c) => c.trim()))
   if (action === 'dedupe') {
     const seen = new Set<string>()

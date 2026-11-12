@@ -49,6 +49,8 @@ await check('rotate all 90', async () => {
   return d.getPage(0).getRotation().angle === 90
 })
 await check('compress produces valid pdf', async () => (await pages(await PDF.compressPdf(a, 'recommended'))) === 3)
+await check('compress output is never larger than input', async () => (await PDF.compressPdf(a, 'recommended')).blob.size <= a.size)
+await check('compress extreme output is never larger than input', async () => (await PDF.compressPdf(a, 'extreme')).blob.size <= a.size)
 await check('page numbers valid', async () => (await pages(await PDF.addPageNumbers(a, 'bottom-center', 1, 'Page {n} of {total}'))) === 3)
 await check('watermark valid', async () => (await pages(await PDF.watermarkPdf(a, 'TEST', 0.3, 48))) === 3)
 await check('parseRanges', () => PDF.parseRanges('1-2, 3', 5).join(',') === '0,1,2')

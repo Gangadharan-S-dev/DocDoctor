@@ -15,7 +15,9 @@ export interface RunSettings {
   wmText: string
   wmOpacity: number
   wmFontSize: number
-  pageSize: 'fit' | 'a4'
+  wmPos?: 'bottom-right' | 'center' | 'tile' | 'top-left' | 'bottom-left'
+  wmLogoUrl?: string | null
+  pageSize: 'fit' | 'a4' | 'letter'
   ranges: string
   level: 'less' | 'recommended' | 'extreme'
   pos: 'bottom-center' | 'bottom-right' | 'bottom-left'
@@ -34,14 +36,43 @@ export interface RunSettings {
   pdfY: number
   pdfSize: number
   pdfColor: string
+  pdfEditMode?: 'text' | 'redact'
+  pdfFont?: 'Helvetica' | 'TimesRoman' | 'Courier'
+  pdfRedactW?: number
+  pdfRedactH?: number
   sigData: string | null
   signPos: 'bottom-right' | 'bottom-left' | 'center' | 'custom'
+  sigWidth?: number
   pwd: string
   pwd2: string
   blockSel: number[]
   gridValue: number[] | PageOp[]
   ocrLang: string
   ocrFormat: 'txt' | 'pdf' | 'docx' | 'both'
+  excelOrientation?: 'landscape' | 'portrait'
+  pdfNumFormat?: string
+  pdfNumStart?: number
+  pdfNumSize?: number
+  pdfNumColor?: string
+  pdfNumSkipCover?: boolean
+  pdfWmAngle?: number
+  pdfWmColor?: string
+  pdfWmSize?: number
+  icoSizes?: number[]
+  jsonIndent?: number | 'tab'
+  csvDelim?: string
+  maxEdge?: number
+  targetSizeKB?: number
+  resizeMode?: 'stretch' | 'contain' | 'cover'
+  smoothing?: 'high' | 'pixelated'
+  cropCircular?: boolean
+  imgBgColor?: string
+  rotBgColor?: string
+  wmColor?: string
+  wmAngle?: number
+  wmLogoScale?: number
+  imgPdfMargin?: 'none' | 'compact' | 'standard'
+  imgPdfOrientation?: 'auto' | 'portrait' | 'landscape'
 }
 
 export interface RunContext {
@@ -91,20 +122,44 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
     switch (id) {
       case 'compress-image': {
         const { compressImageSmart } = await import('../../processing/imageWorkerClient')
-        return batch(fs, (f) => compressImageSmart(f, { quality: s.quality / 100, format: s.format }))
+        return batch(fs, (f) => compressImageSmart(f, {
+          quality: s.quality / 100,
+          format: s.format,
+          maxEdge: s.maxEdge,
+          targetSizeKB: s.targetSizeKB,
+        }))
       }
-      case 'resize-image': return batch(fs, (f) => IMG.resizeImage(f, s.width, s.height, s.format))
-      case 'crop-image': return [await IMG.cropImage(f0, s.crop.x, s.crop.y, s.crop.w, s.crop.h)]
+      case 'resize-image': return batch(fs, (f) => IMG.resizeImage(f, s.width, s.height, s.format, {
+        mode: s.resizeMode,
+        smoothing: s.smoothing,
+        bgColor: s.imgBgColor,
+      }))
+      case 'crop-image': return [await IMG.cropImage(f0, s.crop.x, s.crop.y, s.crop.w, s.crop.h, {
+        circular: s.cropCircular,
+      })]
       case 'jpg-to-png': case 'png-to-jpg': case 'jpg-to-webp': case 'png-to-webp': {
         const t: ImgFormat = id.endsWith('png') ? 'image/png' : id.endsWith('webp') ? 'image/webp' : 'image/jpeg'
-        return batch(fs, (f) => IMG.convertImage(f, t))
+        return batch(fs, (f) => IMG.convertImage(f, t, s.quality / 100, { bgColor: s.imgBgColor }))
       }
-      case 'webp-converter': return batch(fs, (f) => IMG.convertImage(f, s.format === 'keep' ? 'image/webp' : s.format))
-      case 'rotate-image': return batch(fs, (f) => IMG.rotateImage(f, s.angle))
+      case 'webp-converter': return batch(fs, (f) => IMG.convertImage(f, s.format === 'keep' ? 'image/webp' : s.format, s.quality / 100, { bgColor: s.imgBgColor }))
+      case 'rotate-image': return batch(fs, (f) => IMG.rotateImage(f, s.angle, { bgColor: s.rotBgColor }))
       case 'flip-image': return batch(fs, (f) => IMG.flipImage(f, s.flipH, s.flipV))
-      case 'image-watermark': return batch(fs, (f) => IMG.watermarkImage(f, { text: s.wmText || 'DocDoctor', opacity: s.wmOpacity, fontSize: s.wmFontSize, position: 'bottom-right' }))
-      case 'image-to-pdf': return [await IMG.imagesToPdf(fs, s.pageSize)]
-      case 'ico-converter': return [await IMG.imageToIco(f0, [16, 24, 32, 48, 64])]
+      case 'image-watermark': return batch(fs, (f) => IMG.watermarkImage(f, {
+        text: s.wmText || 'DocDoctor',
+        opacity: s.wmOpacity,
+        fontSize: s.wmFontSize,
+        position: s.wmPos || 'bottom-right',
+        logoUrl: s.wmLogoUrl,
+        colorHex: s.wmColor,
+        angle: s.wmAngle,
+        logoScale: s.wmLogoScale,
+      }))
+      case 'image-to-pdf': return [await IMG.imagesToPdf(fs, s.pageSize, {
+        pageSize: s.pageSize,
+        margin: s.imgPdfMargin,
+        orientation: s.imgPdfOrientation,
+      })]
+      case 'ico-converter': return [await IMG.imageToIco(f0, s.icoSizes?.length ? s.icoSizes : [16, 24, 32, 48, 64])]
     }
   }
   if (PDF_IDS.has(id)) {
@@ -117,8 +172,20 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'organize-pdf': return [await PDF.organizePdf(f0, s.gridValue as PageOp[])]
       case 'rotate-pdf': return [await PDF.rotatePdf(f0, s.angle, 'all')]
       case 'compress-pdf': return [await PDF.compressPdf(f0, s.level, proc)]
-      case 'pdf-page-numbers': return [await PDF.addPageNumbers(f0, s.pos, 1, 'Page {n} of {total}')]
-      case 'pdf-watermark': return [await PDF.watermarkPdf(f0, s.wmText || 'DocDoctor', s.wmOpacity, 48)]
+      case 'pdf-page-numbers': return [await PDF.addPageNumbers(
+        f0,
+        s.pos,
+        s.pdfNumStart ?? 1,
+        s.pdfNumFormat ?? 'Page {n} of {total}',
+        { fontSize: s.pdfNumSize, colorHex: s.pdfNumColor, skipCover: s.pdfNumSkipCover }
+      )]
+      case 'pdf-watermark': return [await PDF.watermarkPdf(
+        f0,
+        s.wmText || 'DocDoctor',
+        s.wmOpacity,
+        s.pdfWmSize ?? 48,
+        { angle: s.pdfWmAngle, colorHex: s.pdfWmColor }
+      )]
       case 'pdf-to-jpg': case 'pdf-to-image': return PDF.pdfToImages(f0, 'image/jpeg', s.scale, proc)
       case 'pdf-to-png': return PDF.pdfToImages(f0, 'image/png', s.scale, proc)
       case 'compare-pdf': return PDF.comparePdfs(fs, proc)
@@ -147,7 +214,7 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'remove-worksheets': return [await OFF.removeWorksheets(f0, s.sheetSel)]
       case 'compress-excel': return [await OFF.recompressPackage(f0, `${f0.name.replace(/\.xlsx$/i, '')}-compressed.xlsx`, OFF.XLSX_TYPE)]
       case 'excel-to-html': return [await OFF.excelToHtml(f0)]
-      case 'xlsx-to-pdf': case 'excel-to-pdf': return [await OFF.excelToPdf(f0)]
+      case 'xlsx-to-pdf': case 'excel-to-pdf': return [await OFF.excelToPdf(f0, { orientation: s.excelOrientation })]
       case 'remove-word-pages': case 'docx-page-remover': return [await OFF.removeDocxPages(f0, s.blockSel)]
     }
   }
@@ -158,20 +225,25 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'extract-zip': return TXT.extractZip(f0)
       case 'html-to-txt': return [await TXT.htmlToText(f0)]
       case 'txt-converter': case 'markdown-converter': return [await TXT.convertText(f0, s.txtTo)]
-      case 'json-formatter': return [{ name: f0.name, blob: new Blob([TXT.formatJson(await f0.text(), s.jsonMinify)], { type: 'application/json' }) }]
+      case 'json-formatter': return [{ name: f0.name, blob: new Blob([TXT.formatJson(await f0.text(), s.jsonMinify, s.jsonIndent ?? 2)], { type: 'application/json' }) }]
       case 'json-to-xml': return [{ name: `${f0.name.replace(/\.json$/i, '')}.xml`, blob: new Blob([TXT.jsonToXml(await f0.text())], { type: 'application/xml' }) }]
       case 'xml-formatter': return [{ name: f0.name, blob: new Blob([TXT.formatXml(await f0.text())], { type: 'application/xml' }) }]
-      case 'csv-tools': return [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), s.csvAction, ',')], { type: 'text/csv' }) }]
+      case 'csv-tools': return [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), s.csvAction, s.csvDelim || ',')], { type: 'text/csv' }) }]
     }
   }
   if (ADVANCED_IDS.has(id)) {
     const ADV = await import('../../processing/advanced')
     switch (id) {
-      case 'edit-pdf': return [await ADV.editPdfAddText(f0, s.pdfText, s.pdfPage, s.pdfX, s.pdfY, s.pdfSize, s.pdfColor)]
+      case 'edit-pdf': return [await ADV.editPdfAddText(f0, s.pdfText, s.pdfPage, s.pdfX, s.pdfY, s.pdfSize, s.pdfColor, {
+        isRedact: s.pdfEditMode === 'redact',
+        fontFamily: s.pdfFont,
+        redactWidth: s.pdfRedactW,
+        redactHeight: s.pdfRedactH,
+      })]
       case 'sign-pdf': {
         if (!s.sigData) throw new Error('Draw your signature first.')
         const sigBytes = new Uint8Array(await (await fetch(s.sigData)).arrayBuffer())
-        const pos = s.signPos === 'custom' ? { xPct: s.pdfX, yPct: s.pdfY } : s.signPos
+        const pos = s.signPos === 'custom' ? { xPct: s.pdfX, yPct: s.pdfY, width: s.sigWidth } : s.signPos
         return [await ADV.signPdf(f0, sigBytes, s.pdfPage, pos)]
       }
       case 'repair-pdf': return [await ADV.repairPdf(f0)]

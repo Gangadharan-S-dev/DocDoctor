@@ -81,6 +81,7 @@ const rebuilt = await OFF.textToDocx('# New Title\nEdited paragraph.', 'edited.d
 check('edit word rebuild readable', (await (await OFF.wordToText(asFile(rebuilt.blob, 'e.docx', OFF.DOCX_TYPE))).blob.text()).includes('Edited paragraph.'))
 const compressedDocx = await OFF.recompressPackage(docxA, 'c.docx', OFF.DOCX_TYPE)
 check('compress docx still readable', (await (await OFF.wordToText(asFile(compressedDocx.blob, 'c.docx', OFF.DOCX_TYPE))).blob.text()).includes('Alpha'))
+check('compress docx output is never larger than input', compressedDocx.blob.size <= docxA.size)
 
 // ── PowerPoint ───────────────────────────────────────────────────
 const slides = await OFF.listSlides(pptxFile)

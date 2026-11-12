@@ -44,20 +44,50 @@ export async function textToPdf(text: string, title: string): Promise<Blob> {
   return pdfBlob(await doc.save())
 }
 
-// ── Edit PDF: stamp text at a chosen position on a chosen page ───
+// ── Edit PDF: stamp text or redaction box at a chosen position on a chosen page ───
+export interface EditPdfOptions {
+  fontFamily?: 'Helvetica' | 'TimesRoman' | 'Courier'
+  isRedact?: boolean
+  redactWidth?: number
+  redactHeight?: number
+}
+
 export async function editPdfAddText(
   file: File, text: string, pageNum: number, xPct: number, yPct: number, size: number, colorHex: string,
+  opts?: EditPdfOptions,
 ): Promise<OutputFile> {
-  if (!text.trim()) throw new Error('Enter the text to add first.')
+  const isRedact = opts?.isRedact ?? false
+  if (!isRedact && !text.trim()) throw new Error('Enter the text to add first.')
   const doc = await PDFDocument.load(await file.arrayBuffer())
   if (pageNum < 1 || pageNum > doc.getPageCount()) throw new Error(`Page ${pageNum} does not exist (document has ${doc.getPageCount()} pages).`)
   const page = doc.getPage(pageNum - 1)
   const { width, height } = page.getSize()
-  const font = await doc.embedFont(StandardFonts.HelveticaBold)
+
   const hex = colorHex.replace('#', '')
   const col = rgb(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255)
-  // UI coordinates are % from the top-left; PDF origin is bottom-left.
-  page.drawText(text, { x: (xPct / 100) * width, y: height - (yPct / 100) * height, size, font, color: col })
+  const x = (xPct / 100) * width
+  const y = height - (yPct / 100) * height
+
+  if (isRedact) {
+    const rw = opts?.redactWidth ?? 120
+    const rh = opts?.redactHeight ?? 24
+    page.drawRectangle({
+      x: Math.max(0, x - rw / 2),
+      y: Math.max(0, y - rh / 2),
+      width: rw,
+      height: rh,
+      color: col,
+    })
+  } else {
+    const fontName = opts?.fontFamily === 'TimesRoman'
+      ? StandardFonts.TimesRomanBold
+      : opts?.fontFamily === 'Courier'
+        ? StandardFonts.CourierBold
+        : StandardFonts.HelveticaBold
+    const font = await doc.embedFont(fontName)
+    page.drawText(text, { x, y, size, font, color: col })
+  }
+
   return { name: `${stem(file.name)}-edited.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
