@@ -604,6 +604,33 @@ export function parseJpegExif(buffer: ArrayBuffer): ExifData | null {
   return null
 }
 
+/** Detect whether a GIF or WebP buffer contains multiple animation frames. */
+export function detectAnimatedImage(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer)
+  if (bytes.length < 16) return false
+  // GIF87a / GIF89a: count Graphic Control Extension blocks (0x21 0xF9 0x04)
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    let frames = 0
+    for (let i = 6; i < bytes.length - 3; i++) {
+      if (bytes[i] === 0x21 && bytes[i + 1] === 0xf9 && bytes[i + 2] === 0x04) {
+        frames++
+        if (frames > 1) return true
+      }
+    }
+    return false
+  }
+  // RIFF....WEBP: check VP8X animation flag (bit 1 at offset 20)
+  if (
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    if (bytes[12] === 0x56 && bytes[13] === 0x50 && bytes[14] === 0x38 && bytes[15] === 0x58 && bytes.length > 20) {
+      return (bytes[20] & 0x02) !== 0
+    }
+  }
+  return false
+}
+
 export interface ImageMeta {
   width: number
   height: number
@@ -611,12 +638,14 @@ export interface ImageMeta {
   size: number
   name: string
   exif?: ExifData | null
+  animated?: boolean
 }
 
 export async function imageMetadata(file: File): Promise<ImageMeta> {
   const bmp = await loadBitmap(file)
   const buf = await file.slice(0, 131072).arrayBuffer().catch(() => new ArrayBuffer(0))
   const exif = parseJpegExif(buf)
+  const animated = detectAnimatedImage(buf)
   const meta: ImageMeta = {
     width: bmp.width,
     height: bmp.height,
@@ -624,6 +653,7 @@ export async function imageMetadata(file: File): Promise<ImageMeta> {
     size: file.size,
     name: file.name,
     exif,
+    animated,
   }
   bmp.close()
   return meta

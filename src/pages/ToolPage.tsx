@@ -1,9 +1,9 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import {
   ShieldCheck, FileCheck2, Clock3, Info, Loader2, Download, FolderDown,
   RotateCcw, AlertTriangle, Star, XCircle, Copy, Check, Eye, X, SplitSquareVertical,
-  RotateCw, FlipHorizontal, FlipVertical, Camera, MapPin
+  RotateCw, FlipHorizontal, FlipVertical, Camera, MapPin, Plus, Trash2, ArrowRight, Lock
 } from 'lucide-react'
 import { TOOLS, categoryById, formatSize, isImplemented, isServerTool, serverEndpointFor, toolById, type Tool } from '../data/tools'
 import UploadArea, { type PickedFile } from '../components/UploadArea'
@@ -12,7 +12,9 @@ import type { OutputFile } from '../processing/download'
 import { downloadBlob, downloadZip } from '../processing/download'
 import type { ImageMeta, ImgFormat } from '../processing/image'
 import type { PageOp } from '../processing/pdf'
-import type { FileMeta } from '../processing/text'
+import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
+import type { PdfAnnotation, SignPlacement } from '../processing/advanced'
+import type { OfficeMediaSummary } from '../processing/office'
 import { runTool } from './tool/runEngine'
 import { OCR_LANGUAGES } from '../processing/ocr-languages'
 import { isFavorite, pushRecent, toggleFavorite } from '../lib/prefs'
@@ -56,8 +58,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const cat = categoryById(tool.category)
   const Icon = tool.icon
   const live = isImplemented(tool)
+  const location = useLocation()
+  const navigate = useNavigate()
   const related = useMemo(() => TOOLS.filter((t) => t.category === tool.category && t.id !== tool.id).slice(0, 4), [tool])
-  const [files, setFiles] = useState<PickedFile[]>([])
+  const [files, setFiles] = useState<PickedFile[]>(() => {
+    const state = location.state as { chainedFiles?: File[] } | null
+    if (state?.chainedFiles?.length) {
+      return state.chainedFiles.map((file, i) => ({
+        id: `${file.name}-${file.size}-${Date.now()}-${i}`,
+        file,
+      }))
+    }
+    return []
+  })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [results, setResults] = useState<OutputFile[]>([])
@@ -91,7 +104,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [splitMode, setSplitMode] = useState<'heading' | 'paragraphs'>('heading')
   const [txtTo, setTxtTo] = useState<'txt' | 'html' | 'md'>('html')
   const [jsonMinify, setJsonMinify] = useState(false)
-  const [csvAction, setCsvAction] = useState<'dedupe' | 'trim'>('dedupe')
+  const [csvAction, setCsvAction] = useState<CsvAction>('dedupe')
   const [editText, setEditText] = useState('')
   const [fileMeta, setFileMeta] = useState<FileMeta | null>(null)
   const [pdfText, setPdfText] = useState('')
@@ -100,16 +113,32 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pdfY, setPdfY] = useState(12)
   const [pdfSize, setPdfSize] = useState(16)
   const [pdfColor, setPdfColor] = useState('#122036')
-  const [pdfEditMode, setPdfEditMode] = useState<'text' | 'redact'>('text')
+  const [pdfEditMode, setPdfEditMode] = useState<'text' | 'redact' | 'highlight'>('text')
   const [pdfFont, setPdfFont] = useState<'Helvetica' | 'TimesRoman' | 'Courier'>('Helvetica')
   const [pdfRedactW, setPdfRedactW] = useState(120)
   const [pdfRedactH, setPdfRedactH] = useState(24)
+  const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([])
+  const [pdfDestructiveRedact, setPdfDestructiveRedact] = useState(true)
   const [sigData, setSigData] = useState<string | null>(null)
   const [sigWidth, setSigWidth] = useState(170)
   const [signPos, setSignPos] = useState<'bottom-right' | 'bottom-left' | 'center' | 'custom'>('bottom-right')
+  const [signAllPages, setSignAllPages] = useState(false)
+  const [signDateStamp, setSignDateStamp] = useState('')
+  const [signPlacements, setSignPlacements] = useState<SignPlacement[]>([])
+  const [pptxMode, setPptxMode] = useState<'image' | 'editable'>('image')
   const [excelOrientation, setExcelOrientation] = useState<'landscape' | 'portrait'>('landscape')
+  const [excelGridlines, setExcelGridlines] = useState(true)
 
-  // Upgrades: page numbers, watermark, icons, JSON, CSV
+  // Office & Word upgrades
+  const [wordEditMode, setWordEditMode] = useState<'editor' | 'replace'>('editor')
+  const [wordFind, setWordFind] = useState('')
+  const [wordReplace, setWordReplace] = useState('')
+  const [wordMatchCase, setWordMatchCase] = useState(false)
+  const [officeMedia, setOfficeMedia] = useState<OfficeMediaSummary | null>(null)
+  const [officeMediaQuality, setOfficeMediaQuality] = useState(68)
+  const [officeMediaMaxEdge, setOfficeMediaMaxEdge] = useState(1600)
+
+  // Upgrades: page numbers, watermark, icons, JSON, CSV, ZIP
   const [pdfNumFormat, setPdfNumFormat] = useState('Page {n} of {total}')
   const [pdfNumStart, setPdfNumStart] = useState(1)
   const [pdfNumSize, setPdfNumSize] = useState(10)
@@ -125,8 +154,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [jsonValidation, setJsonValidation] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const [csvDelim, setCsvDelim] = useState(',')
+  const [csvOutDelim, setCsvOutDelim] = useState('')
+  const [csvSortCol, setCsvSortCol] = useState(0)
+  const [csvFilterQuery, setCsvFilterQuery] = useState('')
+  const [csvFindText, setCsvFindText] = useState('')
+  const [csvReplaceText, setCsvReplaceText] = useState('')
+  const [csvKeepCols, setCsvKeepCols] = useState<number[]>([])
   const [csvPreviewRows, setCsvPreviewRows] = useState<string[][]>([])
   const [zipSearch, setZipSearch] = useState('')
+  const [zipLevel, setZipLevel] = useState(6)
+  const [zipPassword, setZipPassword] = useState('')
+  const [zipArchiveName, setZipArchiveName] = useState('files.zip')
+  const [zipSummary, setZipSummary] = useState<ZipArchiveSummary | null>(null)
+  const [zipFilterNames, setZipFilterNames] = useState<string[]>([])
 
   // Image upgrades state
   const [imgMaxEdge, setImgMaxEdge] = useState<number>(0)
@@ -174,7 +214,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     setFiles(next)
     setResults([]); setError(''); setMeta(null); setDims(null); setFileMeta(null); setPreviewText('')
     setCustomNames({}); setPdfPreviewUrl(null); setCopiedIdx(null); setWmLogoUrl(null)
-    setJsonValidation(null); setCsvPreviewRows([])
+    setJsonValidation(null); setCsvPreviewRows([]); setCsvKeepCols([])
+    setPdfAnnotations([]); setSignPlacements([]); setOfficeMedia(null); setZipSummary(null); setZipFilterNames([])
   }
 
   // Load image dimensions / metadata when the first file changes.
@@ -187,6 +228,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     }
     if (tool.id === 'edit-word') {
       import('../processing/office').then((m) => m.wordExtractText(first)).then((v) => { if (alive) setEditText(v) }).catch(() => { if (alive) setError('Could not extract text — please use a .docx file.') })
+      return () => { alive = false }
+    }
+    if (tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') {
+      import('../processing/office').then((m) => m.inspectOfficeMedia(first)).then((v) => { if (alive) setOfficeMedia(v) }).catch(() => {})
+      return () => { alive = false }
+    }
+    if (tool.id === 'extract-zip') {
+      import('../processing/text').then((m) => m.listZipEntries(first)).then((v) => {
+        if (alive) {
+          setZipSummary(v)
+          setZipFilterNames(v.entries.map((e) => e.name))
+        }
+      }).catch(() => {})
       return () => { alive = false }
     }
     if (!first.type.startsWith('image/')) return
@@ -217,7 +271,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         if (!alive) return
         import('../processing/text').then((m) => {
           const rows = m.parseCsv(txt, csvDelim).slice(0, 8)
-          if (alive) setCsvPreviewRows(rows)
+          if (alive) {
+            setCsvPreviewRows(rows)
+            if (rows[0]?.length) {
+              setCsvKeepCols(rows[0].map((_, idx) => idx))
+            }
+          }
         })
       }).catch(() => {})
     }
@@ -298,10 +357,24 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           wmFontSize: Math.max(24, Math.round((dims?.w ?? 800) / 18)),
           wmPos, wmLogoUrl, pageSize, ranges, level, pos, scale, slideSel, slideOrder, sheetSel, splitMode,
           txtTo, jsonMinify, csvAction, editText, pdfText, pdfPage, pdfX, pdfY, pdfSize,
-          pdfColor, pdfEditMode, pdfFont, pdfRedactW, pdfRedactH, sigData, sigWidth, signPos,
-          pwd, pwd2, blockSel, gridValue, ocrLang, ocrFormat, excelOrientation,
+          pdfColor, pdfEditMode, pdfFont, pdfRedactW, pdfRedactH,
+          pdfAnnotations: pdfAnnotations.length ? pdfAnnotations : undefined,
+          pdfDestructiveRedact,
+          sigData, sigWidth, signPos,
+          signAllPages,
+          signDateStamp: signDateStamp.trim() || undefined,
+          signPlacements: signPlacements.length ? signPlacements : undefined,
+          pptxMode,
+          pwd, pwd2, blockSel, gridValue, ocrLang, ocrFormat, excelOrientation, excelGridlines,
+          wordEditMode, wordFind, wordReplace, wordMatchCase,
+          officeMediaQuality, officeMediaMaxEdge,
           pdfNumFormat, pdfNumStart, pdfNumSize, pdfNumColor, pdfNumSkipCover,
           pdfWmAngle, pdfWmColor, pdfWmSize, icoSizes, jsonIndent, csvDelim,
+          csvOutDelim: csvOutDelim || undefined,
+          csvSortCol, csvFilterQuery, csvFindText, csvReplaceText,
+          csvKeepCols: csvPreviewRows[0]?.length && csvKeepCols.length < csvPreviewRows[0].length ? csvKeepCols : undefined,
+          zipLevel, zipPassword: zipPassword || undefined, zipArchiveName: zipArchiveName || undefined,
+          zipFilterNames: zipSummary && zipFilterNames.length > 0 && zipFilterNames.length < zipSummary.entries.length ? zipFilterNames : undefined,
           maxEdge: imgMaxEdge || undefined,
           targetSizeKB: targetSizeKB || undefined,
           resizeMode,
@@ -411,6 +484,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     try {
       const { stripExif } = await import('../processing/image')
       const out = await stripExif(first)
+      setResults([out])
       downloadBlob(out.blob, out.name)
     } catch {
       setError('Failed to strip metadata.')
@@ -502,6 +576,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 ['Aspect Ratio', aspectRatio ? `${aspectRatio.common} (${aspectRatio.orientation})` : 'N/A'],
                 ['Resolution', aspectRatio ? `${aspectRatio.mp} Megapixels` : 'N/A'],
                 ['Format', meta.type],
+                ['Animation', meta.animated ? 'Animated (Multi-frame)' : 'Static Image'],
                 ['Size', formatSize(meta.size)],
                 ['Camera', meta.exif?.make || meta.exif?.model ? `${meta.exif?.make || ''} ${meta.exif?.model || ''}`.trim() : 'N/A in EXIF'],
                 ['Date Captured', meta.exif?.dateTimeOriginal || 'N/A in EXIF'],
@@ -549,7 +624,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         {first && tool.id === 'edit-pdf' && (
           <div className="mt-6 border-t border-slate-100 pt-5">
             <p className="mb-3 text-sm font-bold text-ink-950">
-              {pdfEditMode === 'redact' ? 'Click the page to position your redaction/whiteout box' : 'Click the page to place your text'}
+              {pdfEditMode === 'redact'
+                ? 'Click the page to position your redaction/whiteout box'
+                : pdfEditMode === 'highlight'
+                  ? 'Click the page to position your highlight box'
+                  : 'Click the page to place your text'}
             </p>
             <Suspense fallback={<PickerFallback />}>
               <PagePlacement
@@ -559,9 +638,23 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 y={pdfY}
                 onPick={(x, y) => { setPdfX(x); setPdfY(y) }}
                 onPageChange={(p) => setPdfPage(p)}
-                stampText={pdfEditMode === 'redact' ? (pdfColor === '#000000' ? '████' : '░░░░') : (pdfText || 'Text here')}
+                stampText={
+                  pdfEditMode === 'redact'
+                    ? (pdfColor === '#000000' ? '████' : '░░░░')
+                    : pdfEditMode === 'highlight'
+                      ? '▒▒ HIGHLIGHT ▒▒'
+                      : (pdfText || 'Text here')
+                }
                 textColor={pdfColor}
                 textSize={pdfSize}
+                queuedOverlays={pdfAnnotations.map((a, idx) => ({
+                  id: `ann-${idx}`,
+                  page: a.pageNum,
+                  x: a.xPct,
+                  y: a.yPct,
+                  label: a.mode === 'text' ? (a.text || 'Text') : a.mode === 'highlight' ? 'Highlight' : 'Redact',
+                  color: a.colorHex,
+                }))}
               />
             </Suspense>
           </div>
@@ -585,6 +678,14 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     onPick={(x, y) => { setPdfX(x); setPdfY(y); setSignPos('custom') }}
                     onPageChange={(p) => setPdfPage(p)}
                     stampPreview={sigData}
+                    queuedOverlays={signPlacements.map((p, idx) => ({
+                      id: `sig-${idx}`,
+                      page: p.pageNum,
+                      x: p.xPct,
+                      y: p.yPct,
+                      label: `Sig #${idx + 1} (p.${p.pageNum})`,
+                      imgUrl: sigData,
+                    }))}
                   />
                 </Suspense>
               </div>
@@ -610,29 +711,79 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         )}
 
         {tool.id === 'edit-word' && first && (
-          <div className="mt-6 border-t border-slate-100 pt-5">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-bold text-ink-950">Document Text Editor</span>
-              <div className="flex items-center gap-3 text-xs font-semibold text-slate-500">
-                <span>{editText.split(/\s+/).filter(Boolean).length} words</span>
-                <span>·</span>
-                <span>{editText.length} characters</span>
+          <div className="mt-6 border-t border-slate-100 pt-5 space-y-4">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setWordEditMode('editor')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${wordEditMode === 'editor' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                Full Text Editor (Markdown &amp; Tables)
+              </button>
+              <button
+                type="button"
+                onClick={() => setWordEditMode('replace')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${wordEditMode === 'replace' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                In-Place Find &amp; Replace (Preserves 100% Original Styling)
+              </button>
+            </div>
+
+            {wordEditMode === 'editor' ? (
+              <div>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-bold text-ink-950">Document Text Editor</span>
+                  <div className="flex items-center gap-3 text-xs font-semibold text-slate-500">
+                    <span>{editText.split(/\s+/).filter(Boolean).length} words</span>
+                    <span>·</span>
+                    <span>{editText.length} characters</span>
+                  </div>
+                </div>
+                <div className="mb-2 flex flex-wrap gap-1.5 border border-slate-200 bg-slate-50 p-1.5 rounded-xl">
+                  <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '# Heading 1\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ H1</button>
+                  <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '## Heading 2\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ H2</button>
+                  <button type="button" onClick={() => setEditText((t) => t + '**bold text**')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ Bold</button>
+                  <button type="button" onClick={() => setEditText((t) => t + '*italic text*')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ Italic</button>
+                  <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '- Bullet item\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">• Bullet</button>
+                  <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '| Column 1 | Column 2 |\n| --- | --- |\n| Value A | Value B |\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ Table</button>
+                  <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '---\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">--- Divider</button>
+                  <button type="button" onClick={() => setEditText('')} className="ml-auto rounded px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-50">Clear</button>
+                </div>
+                <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} className="input font-mono !text-[13px] leading-relaxed" placeholder="Extracting text…" />
+                <p className="mt-2 text-xs font-semibold text-amber-700">Supports Markdown headings (#, ##), **bold**, *italic*, bullets (-), and pipe tables (| a | b |). Need to keep original fonts, logos, and complex layouts intact? Switch to &quot;In-Place Find &amp; Replace&quot; above.</p>
               </div>
-            </div>
-            <div className="mb-2 flex flex-wrap gap-1.5 border border-slate-200 bg-slate-50 p-1.5 rounded-xl">
-              <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '# Heading 1\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ H1</button>
-              <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '## Heading 2\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">+ H2</button>
-              <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '- Bullet item\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">• Bullet</button>
-              <button type="button" onClick={() => setEditText((t) => t + (t && !t.endsWith('\n') ? '\n' : '') + '---\n')} className="rounded px-2.5 py-1 text-xs font-bold bg-white text-slate-700 shadow-sm hover:bg-slate-100">--- Divider</button>
-              <button type="button" onClick={() => setEditText('')} className="ml-auto rounded px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-50">Clear</button>
-            </div>
-            <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} className="input font-mono !text-[13px] leading-relaxed" placeholder="Extracting text…" />
-            <p className="mt-2 text-xs font-semibold text-amber-700">Heads-up: the rebuilt DOCX uses clean, simple formatting — original fonts, images and tables are not carried into the edited file.</p>
+            ) : (
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Find text in DOCX</span>
+                    <input value={wordFind} onChange={(e) => setWordFind(e.target.value)} className="input" placeholder="e.g. {{CLIENT_NAME}} or 2025" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Replace with</span>
+                    <input value={wordReplace} onChange={(e) => setWordReplace(e.target.value)} className="input" placeholder="e.g. Acme Corp or 2026" />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                  Case-sensitive match
+                </label>
+                <p className="text-xs text-slate-600">
+                  Directly updates text runs inside <code className="rounded bg-white px-1 py-0.5">word/document.xml</code>, headers, and footers while preserving 100% of original fonts, tables, images, and page layout.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
         {files.length > 0 && live && tool.id !== 'image-metadata' && tool.id !== 'file-metadata' && (
           <div className="mt-6 space-y-4 border-t border-slate-100 pt-5">
+            {meta?.animated && (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span>Animated image detected ({meta.type}). Browser canvas processing exports a static frame of the first animation frame.</span>
+              </div>
+            )}
             {/* Tool-specific settings */}
             {tool.id === 'compress-image' && (
               <div className="space-y-4">
@@ -1267,25 +1418,110 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {tool.id === 'csv-tools' && (
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {sel('Action', csvAction, setCsvAction, [['dedupe', 'Remove duplicate rows'], ['trim', 'Trim whitespace in every cell']])}
-                  {sel('Delimiter', csvDelim, setCsvDelim, [
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {sel('Action', csvAction, setCsvAction as never, [
+                    ['dedupe', 'Remove duplicate rows'],
+                    ['trim', 'Trim whitespace in every cell'],
+                    ['sort-asc', 'Sort rows A → Z (by column)'],
+                    ['sort-desc', 'Sort rows Z → A (by column)'],
+                    ['filter', 'Filter rows matching query'],
+                    ['find-replace', 'Find & Replace across cells'],
+                  ])}
+                  {sel('Input Delimiter', csvDelim, setCsvDelim, [
                     [',', 'Comma ( , ) — Standard CSV'],
                     [';', 'Semicolon ( ; ) — European CSV'],
                     ['\t', 'Tab ( \\t ) — TSV'],
                     ['|', 'Pipe ( | )'],
                   ])}
+                  {sel('Output Delimiter', csvOutDelim, setCsvOutDelim, [
+                    ['', 'Keep input delimiter'],
+                    [',', 'Comma ( , )'],
+                    [';', 'Semicolon ( ; )'],
+                    ['\t', 'Tab ( \\t )'],
+                    ['|', 'Pipe ( | )'],
+                  ])}
                 </div>
+
+                {(csvAction === 'sort-asc' || csvAction === 'sort-desc') && (
+                  <div className="max-w-sm">
+                    {sel(
+                      'Sort by Column',
+                      String(csvSortCol),
+                      (v: string) => setCsvSortCol(+v),
+                      (csvPreviewRows[0]?.length ? csvPreviewRows[0] : ['Col 1']).map((hdr, idx) => [String(idx), `Col ${idx + 1}: ${hdr || '(empty)'}`] as [string, string])
+                    )}
+                  </div>
+                )}
+
+                {csvAction === 'filter' && (
+                  <label className="block max-w-md">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Keep rows containing text (header row is always kept)</span>
+                    <input value={csvFilterQuery} onChange={(e) => setCsvFilterQuery(e.target.value)} className="input" placeholder="e.g. Active, @gmail.com, 2026" />
+                  </label>
+                )}
+
+                {csvAction === 'find-replace' && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-ink-950">Find text</span>
+                      <input value={csvFindText} onChange={(e) => setCsvFindText(e.target.value)} className="input" placeholder="Text to find" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-ink-950">Replace with</span>
+                      <input value={csvReplaceText} onChange={(e) => setCsvReplaceText(e.target.value)} className="input" placeholder="Replacement text" />
+                    </label>
+                  </div>
+                )}
+
                 {csvPreviewRows.length > 0 && (
-                  <div>
-                    <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-400">Data Table Preview (First {csvPreviewRows.length} Rows)</span>
-                    <div className="max-h-48 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
+                        Data Table Preview (First {csvPreviewRows.length} Rows) · Uncheck columns to drop them
+                      </span>
+                      {csvPreviewRows[0]?.length && csvKeepCols.length < csvPreviewRows[0].length && (
+                        <button
+                          type="button"
+                          onClick={() => setCsvKeepCols(csvPreviewRows[0].map((_, idx) => idx))}
+                          className="text-xs font-bold text-accent hover:underline"
+                        >
+                          Select all columns ({csvKeepCols.length}/{csvPreviewRows[0].length})
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                       <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-100">
+                            {(csvPreviewRows[0] ?? []).slice(0, 8).map((hdr, ci) => {
+                              const checked = csvKeepCols.includes(ci)
+                              return (
+                                <th key={ci} className="border-r border-slate-200 px-3 py-1.5">
+                                  <label className="flex cursor-pointer items-center gap-1.5 font-bold text-ink-950">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        if (checked && csvKeepCols.length > 1) {
+                                          setCsvKeepCols(csvKeepCols.filter((c) => c !== ci))
+                                        } else if (!checked) {
+                                          setCsvKeepCols([...csvKeepCols, ci].sort((a, b) => a - b))
+                                        }
+                                      }}
+                                      className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                                    />
+                                    <span className="truncate max-w-32">{hdr || `Col ${ci + 1}`}</span>
+                                  </label>
+                                </th>
+                              )
+                            })}
+                          </tr>
+                        </thead>
                         <tbody>
-                          {csvPreviewRows.map((row, ri) => (
-                            <tr key={ri} className={ri === 0 ? 'bg-slate-50 font-bold border-b border-slate-200' : 'border-b border-slate-100 hover:bg-slate-50/50'}>
+                          {csvPreviewRows.slice(1).map((row, ri) => (
+                            <tr key={ri} className="border-b border-slate-100 hover:bg-slate-50/50">
                               {row.slice(0, 8).map((cell, ci) => (
-                                <td key={ci} className="truncate px-3 py-1.5 border-r border-slate-100 max-w-40">{cell}</td>
+                                <td key={ci} className={`truncate px-3 py-1.5 border-r border-slate-100 max-w-40 ${!csvKeepCols.includes(ci) ? 'opacity-35 line-through bg-slate-50' : ''}`}>{cell}</td>
                               ))}
                               {row.length > 8 && <td className="px-2 py-1.5 text-slate-400 font-bold">+{row.length - 8} more cols</td>}
                             </tr>
@@ -1298,34 +1534,186 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
+            {tool.id === 'zip-files' && (
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Archive Filename</span>
+                    <input value={zipArchiveName} onChange={(e) => setZipArchiveName(e.target.value)} className="input" placeholder="files.zip" />
+                  </label>
+                  {sel('Compression Level', String(zipLevel), (v: string) => setZipLevel(+v), [
+                    ['0', '0 — Store Only (Fastest, no compression)'],
+                    ['6', '6 — Balanced Deflate (Recommended)'],
+                    ['9', '9 — Maximum Deflate (Smallest archive)'],
+                  ])}
+                  <label className="block">
+                    <span className="mb-1.5 flex items-center gap-1.5 text-sm font-bold text-ink-950">
+                      <Lock className="h-3.5 w-3.5 text-accent" /> Optional AES-256 Password
+                    </span>
+                    <input
+                      type="password"
+                      value={zipPassword}
+                      onChange={(e) => setZipPassword(e.target.value)}
+                      className="input"
+                      autoComplete="new-password"
+                      placeholder="Leave blank for standard ZIP"
+                    />
+                  </label>
+                </div>
+                {zipPassword && (
+                  <p className="text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-3.5 py-2">
+                    Files will be encrypted with WebCrypto <strong>PBKDF2-SHA256 + AES-256-GCM</strong> inside the ZIP archive. Use DocDoctor&apos;s Extract ZIP tool with the same password to decrypt.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {tool.id === 'extract-zip' && zipSummary && (
+              <div className="space-y-4">
+                {zipSummary.encrypted && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-2">
+                    <p className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                      <Lock className="h-4 w-4 text-amber-700" /> Password-Protected AES-256 Archive Detected
+                    </p>
+                    <input
+                      type="password"
+                      value={zipPassword}
+                      onChange={(e) => setZipPassword(e.target.value)}
+                      className="input max-w-sm bg-white"
+                      placeholder="Enter archive password to decrypt"
+                    />
+                  </div>
+                )}
+                {zipSummary.entries.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
+                        Archive Contents ({zipFilterNames.length} of {zipSummary.entries.length} selected · Total {formatSize(zipSummary.entries.reduce((s, e) => s + e.uncompressedSize, 0))})
+                      </span>
+                      <div className="flex gap-2 text-xs font-bold">
+                        <button type="button" onClick={() => setZipFilterNames(zipSummary.entries.map((e) => e.name))} className="text-accent hover:underline">Select All</button>
+                        <span className="text-slate-300">·</span>
+                        <button type="button" onClick={() => setZipFilterNames(zipSummary.entries.slice(0, 1).map((e) => e.name))} className="text-slate-500 hover:underline">First Only</button>
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-auto rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                      {zipSummary.entries.map((entry) => {
+                        const checked = zipFilterNames.includes(entry.name)
+                        return (
+                          <label key={entry.name} className="flex cursor-pointer items-center justify-between px-3.5 py-2 text-xs hover:bg-slate-50">
+                            <span className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  if (checked && zipFilterNames.length > 1) {
+                                    setZipFilterNames(zipFilterNames.filter((n) => n !== entry.name))
+                                  } else if (!checked) {
+                                    setZipFilterNames([...zipFilterNames, entry.name])
+                                  }
+                                }}
+                                className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                              />
+                              <span className="font-semibold text-ink-950 truncate">{entry.name}</span>
+                            </span>
+                            <span className="text-slate-400 font-semibold shrink-0 ml-2">{formatSize(entry.uncompressedSize)}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {tool.id === 'merge-word' && <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order with a page break between them. You can reorder them in the list above before merging.</p>}
             {tool.id === 'merge-presentations' && <p className="text-xs font-semibold text-slate-500">Slides are appended in upload order using the first deck&apos;s theme. Reorder your decks in the list above before processing.</p>}
             {(tool.id === 'xlsx-to-pdf' || tool.id === 'excel-to-pdf') && (
               <div className="space-y-3">
-                {sel('Page Orientation', excelOrientation, setExcelOrientation as never, [
-                  ['landscape', 'Landscape (Recommended — wider tables)'],
-                  ['portrait', 'Portrait (Standard vertical page)'],
-                ])}
-                <p className="text-xs font-semibold text-slate-500">Produces a clean, values-only PDF table (up to 200 rows per sheet). Landscape orientation provides extra columns.</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Page Orientation', excelOrientation, setExcelOrientation as never, [
+                    ['landscape', 'Landscape (Recommended — wider tables)'],
+                    ['portrait', 'Portrait (Standard vertical page)'],
+                  ])}
+                  <label className="flex items-center gap-2 pt-6 text-sm font-bold text-ink-950">
+                    <input type="checkbox" checked={excelGridlines} onChange={(e) => setExcelGridlines(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    Show cell borders &amp; zebra row shading
+                  </label>
+                </div>
+                <p className="text-xs font-semibold text-slate-500">Renders a proportional bordered PDF table with navy headers that repeat automatically across page breaks.</p>
               </div>
             )}
-            {(tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') && <p className="text-xs text-slate-500">Repacks the file at maximum compression without changing content. Already-compressed media inside may not shrink further — real sizes are shown after processing.</p>}
+            {(tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') && (
+              <div className="space-y-3">
+                {officeMedia && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs">
+                    <span className="font-bold text-ink-950">
+                      Embedded Media Inspector: <span className="text-accent">{officeMedia.count} image{officeMedia.count === 1 ? '' : 's'}</span> ({formatSize(officeMedia.mediaBytes)} of {formatSize(officeMedia.totalBytes)} package)
+                    </span>
+                    <span className="font-semibold text-slate-500">
+                      {officeMedia.count > 0 ? 'Images will be downscaled & recompressed' : 'XML streams will be DEFLATE-9 repacked'}
+                    </span>
+                  </div>
+                )}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {slider('Embedded Image Quality', officeMediaQuality, setOfficeMediaQuality, 30, 92, '%')}
+                  {sel('Max Embedded Image Resolution', String(officeMediaMaxEdge), (v: string) => setOfficeMediaMaxEdge(+v), [
+                    ['2400', '2400 px (High-Res Print)'],
+                    ['1600', '1600 px (Balanced Presentation — Recommended)'],
+                    ['1200', '1200 px (Compact Email / Web)'],
+                    ['800', '800 px (Maximum Shrink)'],
+                  ])}
+                </div>
+                <p className="text-xs text-slate-500">Recompresses embedded media inside <code className="rounded bg-slate-100 px-1">word/media</code>, <code className="rounded bg-slate-100 px-1">ppt/media</code>, or <code className="rounded bg-slate-100 px-1">xl/media</code> and repacks all XML parts at maximum DEFLATE level 9.</p>
+              </div>
+            )}
             {tool.id === 'edit-pdf' && (
               <div className="space-y-4">
-                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
                   <button
                     type="button"
-                    onClick={() => setPdfEditMode('text')}
+                    onClick={() => { setPdfEditMode('text'); setPdfColor('#122036') }}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'text' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
                   >
                     Add Text
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setPdfEditMode('redact'); setPdfColor('#ffffff') }}
+                    onClick={() => { setPdfEditMode('highlight'); setPdfColor('#facc15') }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'highlight' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                  >
+                    Highlight Box
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPdfEditMode('redact'); setPdfColor('#000000') }}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'redact' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
                   >
                     Redact / Whiteout Box
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (pdfEditMode === 'text' && !pdfText.trim()) return
+                      setPdfAnnotations((prev) => [
+                        ...prev,
+                        {
+                          mode: pdfEditMode,
+                          text: pdfText,
+                          pageNum: pdfPage,
+                          xPct: pdfX,
+                          yPct: pdfY,
+                          size: pdfSize,
+                          colorHex: pdfColor,
+                          fontFamily: pdfFont,
+                          width: pdfRedactW,
+                          height: pdfRedactH,
+                        },
+                      ])
+                    }}
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg border border-accent bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-white transition"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add to Page Queue ({pdfAnnotations.length})
                   </button>
                 </div>
 
@@ -1341,36 +1729,138 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     <label className="block"><span className="mb-1.5 block text-sm font-bold">Color</span><input type="color" value={pdfColor} onChange={(e) => setPdfColor(e.target.value)} className="h-[46px] w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-2" /></label>
                   </div>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    {slider('Box Width', pdfRedactW, setPdfRedactW, 20, 300, ' px')}
-                    {slider('Box Height', pdfRedactH, setPdfRedactH, 10, 100, ' px')}
-                    <label className="block"><span className="mb-1.5 block text-sm font-bold">Box Color</span><input type="color" value={pdfColor} onChange={(e) => setPdfColor(e.target.value)} className="h-[46px] w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-2" /></label>
-                    <p className="text-xs text-slate-500 sm:col-span-3">Whiteout covers unwanted text; black creates a formal redaction block. Click the preview above to position.</p>
+                  <div className="space-y-3">
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      {slider('Box Width', pdfRedactW, setPdfRedactW, 20, 360, ' px')}
+                      {slider('Box Height', pdfRedactH, setPdfRedactH, 10, 120, ' px')}
+                      <label className="block"><span className="mb-1.5 block text-sm font-bold">Box Color</span><input type="color" value={pdfColor} onChange={(e) => setPdfColor(e.target.value)} className="h-[46px] w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-2" /></label>
+                    </div>
+                    {pdfEditMode === 'redact' && (
+                      <label className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-950">
+                        <input
+                          type="checkbox"
+                          checked={pdfDestructiveRedact}
+                          onChange={(e) => setPdfDestructiveRedact(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        <span>Destructive Redaction (Flattens redacted pages into images so underlying text cannot be copied or searched)</span>
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {pdfAnnotations.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-ink-950">
+                      <span>Queued Annotations ({pdfAnnotations.length})</span>
+                      <button type="button" onClick={() => setPdfAnnotations([])} className="text-red-600 hover:underline">Clear All</button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {pdfAnnotations.map((a, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: a.colorHex }} />
+                          <span>p.{a.pageNum}: {a.mode === 'text' ? `"${a.text}"` : a.mode}</span>
+                          <button type="button" onClick={() => setPdfAnnotations((prev) => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-600">
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
             )}
             {tool.id === 'sign-pdf' && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {sel('Signature position', signPos, setSignPos as never, [
-                  ['custom', 'Custom placement (click on page above)'],
-                  ['bottom-right', 'Bottom right'],
-                  ['bottom-left', 'Bottom left'],
-                  ['center', 'Center'],
-                ])}
-                {slider('Signature Width', sigWidth, setSigWidth, 80, 320, ' px')}
-                <p className="text-xs text-slate-500 sm:col-span-2">
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Signature position', signPos, setSignPos as never, [
+                    ['custom', 'Custom placement (click on page above)'],
+                    ['bottom-right', 'Bottom right'],
+                    ['bottom-left', 'Bottom left'],
+                    ['center', 'Center'],
+                  ])}
+                  {slider('Signature Width', sigWidth, setSigWidth, 80, 320, ' px')}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 flex items-center justify-between text-sm font-bold text-ink-950">
+                      <span>Date / Signer Stamp (Below Signature)</span>
+                      <button
+                        type="button"
+                        onClick={() => setSignDateStamp(`Signed ${new Date().toISOString().slice(0, 10)}`)}
+                        className="text-xs font-bold text-accent hover:underline"
+                      >
+                        + Insert Today&apos;s Date
+                      </button>
+                    </span>
+                    <input
+                      value={signDateStamp}
+                      onChange={(e) => setSignDateStamp(e.target.value)}
+                      className="input"
+                      placeholder="Optional — e.g. Signed 2026-11-13"
+                    />
+                  </label>
+                  <div className="flex flex-col justify-end gap-2 pb-1">
+                    <label className="flex items-center gap-2 text-sm font-bold text-ink-950">
+                      <input type="checkbox" checked={signAllPages} onChange={(e) => setSignAllPages(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      Apply signature to all pages in PDF
+                    </label>
+                    {!signAllPages && sigData && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSignPlacements((prev) => [
+                            ...prev,
+                            { pageNum: pdfPage, xPct: pdfX, yPct: pdfY, width: sigWidth },
+                          ])
+                        }}
+                        className="inline-flex w-fit items-center gap-1 rounded-lg border border-accent bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-white transition"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Pin Placement on Page {pdfPage} ({signPlacements.length} pinned)
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {signPlacements.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                    <span className="font-bold text-ink-950">Pinned Signature Locations:</span>
+                    {signPlacements.map((p, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold text-slate-700 ring-1 ring-slate-200">
+                        Page {p.pageNum} ({p.xPct}%, {p.yPct}%)
+                        <button type="button" onClick={() => setSignPlacements((prev) => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-600">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">
                   {signPos === 'custom' ? `Signature placed at ${pdfX}% across, ${pdfY}% down on page ${pdfPage}. Click or flip pages on the preview above to reposition.` : `Using ${signPos.replace('-', ' ')} preset position.`}
                 </p>
               </div>
             )}
-            {(tool.id === 'pdf-to-powerpoint' || tool.id === 'pdf-to-pptx') && <div>{sel('Slide image quality', String(scale), (v: string) => setScale(+v), [['1', 'Standard (72 dpi)'], ['2', 'High (144 dpi)'], ['3', 'Print (216 dpi)']])}<p className="mt-2 text-xs text-slate-500">Each PDF page becomes a full-slide image — text inside slides is not editable. For editable text, use PDF to Word instead.</p></div>}
-            {tool.id === 'compare-pdf' && <p className="text-xs font-semibold text-slate-500">Upload two PDF documents to compare them side-by-side. DocDoctor generates a split-view comparison document showing page-by-page differences along with a text match summary.</p>}
+            {(tool.id === 'pdf-to-powerpoint' || tool.id === 'pdf-to-pptx') && (
+              <div className="space-y-3">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Conversion Mode', pptxMode, setPptxMode as never, [
+                    ['image', 'Visual Slide Images (Exact layout fidelity)'],
+                    ['editable', 'Editable Text Boxes (Native PowerPoint text)'],
+                  ])}
+                  {pptxMode === 'image' && sel('Slide image quality', String(scale), (v: string) => setScale(+v), [['1', 'Standard (72 dpi)'], ['2', 'High (144 dpi)'], ['3', 'Print (216 dpi)']])}
+                </div>
+                <p className="text-xs text-slate-500">
+                  {pptxMode === 'editable'
+                    ? 'Extracts positioned text lines and font weights into editable PowerPoint text boxes on each slide.'
+                    : 'Each PDF page becomes a high-resolution full-slide image to preserve exact typography and graphics.'}
+                </p>
+              </div>
+            )}
+            {tool.id === 'compare-pdf' && <p className="text-xs font-semibold text-slate-500">Upload two PDF documents to compare them side-by-side. DocDoctor generates a split-view comparison PDF with diff callout badges plus a line-by-line text diff report.</p>}
             {tool.id === 'repair-pdf' && <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the document structure. Files that cannot be opened at all (truncated, heavily corrupted) cannot be repaired — you&apos;ll get a clear error instead of a fake success.</p>}
-            {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Text-based conversion: selectable text is rebuilt as an editable document. Original layout, columns and images are simplified; scanned PDFs need OCR (not run here).</p>}
-            {tool.id === 'pdf-to-excel' && <p className="text-xs font-semibold text-slate-500">Extracts selectable text into spreadsheet rows, one sheet per page. Borderless tables and scanned PDFs may not align perfectly — check the result.</p>}
-            {(tool.id === 'word-to-pdf' || tool.id === 'docx-to-pdf') && <p className="text-xs font-semibold text-amber-700">Text-flow PDF: content is re-typeset cleanly — original fonts, page breaks and images from the DOCX are not preserved. Use it for readable/printable output, not archival fidelity.</p>}
-            {tool.id === 'epub-to-pdf' && <p className="text-xs font-semibold text-slate-500">Chapter text is extracted in reading order and flowed into a clean PDF. Book styling and images are not carried over.</p>}
+            {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Reconstructs headings, bold text, bullet lists, and multi-column tables from selectable PDF text into an editable Word document.</p>}
+            {tool.id === 'pdf-to-excel' && <p className="text-xs font-semibold text-slate-500">Clusters horizontal text gaps into structured columns and auto-sizes Excel column widths, one worksheet per PDF page.</p>}
+            {(tool.id === 'word-to-pdf' || tool.id === 'docx-to-pdf') && <p className="text-xs font-semibold text-amber-700">Structured PDF flow: preserves headings, bold/italic text, bullet lists, and bordered tables from your DOCX.</p>}
+            {tool.id === 'epub-to-pdf' && <p className="text-xs font-semibold text-slate-500">Extracts chapters in reading order and renders headings, paragraphs, lists, and tables into a clean PDF.</p>}
             {(tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && <p className="text-xs font-semibold text-slate-500">Selected pages and sections will be removed from the DOCX file while preserving all other styles, headers, footers and tables.</p>}
             {tool.id === 'protect-pdf' && (
               <div className="space-y-3">
@@ -1489,9 +1979,20 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         )}
 
         {error && (
-          <p role="alert" className="mt-5 flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
-          </p>
+          <div role="alert" className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200">
+            <span className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+            </span>
+            {error.includes('No selectable text found') && first && (
+              <button
+                type="button"
+                onClick={() => navigate('/tool/ocr-pdf', { state: { chainedFiles: [first] } })}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-red-800 transition"
+              >
+                Open in OCR PDF <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )}
 
         {results.length > 0 && (
@@ -1639,6 +2140,56 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               )}
               <button type="button" onClick={() => handleFilesChange([])} className="btn-ghost !py-2.5"><RotateCcw className="h-4 w-4" /> Start another</button>
             </div>
+
+            {(() => {
+              const firstOut = results[0]
+              if (!firstOut) return null
+              const ext = (firstOut.name.match(/(\.[^.]+)$/)?.[1] ?? '').toLowerCase()
+              const nextToolIds =
+                ext === '.pdf'
+                  ? ['compress-pdf', 'protect-pdf', 'sign-pdf', 'pdf-watermark', 'pdf-page-numbers', 'pdf-to-word']
+                  : ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp'
+                    ? ['compress-image', 'resize-image', 'image-watermark', 'image-to-pdf', 'webp-converter']
+                    : ext === '.docx'
+                      ? ['word-to-pdf', 'compress-docx', 'edit-word', 'word-to-html']
+                      : ext === '.xlsx'
+                        ? ['excel-to-pdf', 'excel-to-csv', 'compress-excel', 'remove-worksheets']
+                        : ext === '.csv'
+                          ? ['csv-tools', 'csv-to-excel', 'csv-to-json']
+                          : ext === '.json'
+                            ? ['json-formatter', 'json-to-csv', 'json-to-xml']
+                            : []
+              const nextTools = nextToolIds
+                .filter((id) => id !== tool.id)
+                .map((id) => toolById(id))
+                .filter((nt): nt is Tool => Boolean(nt))
+                .slice(0, 4)
+              if (!nextTools.length) return null
+              return (
+                <div className="mt-4 border-t border-teal-200/80 pt-3.5">
+                  <span className="mb-2 block text-[11px] font-extrabold uppercase tracking-wide text-teal-800">
+                    Chain Output Directly Into Next Tool
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {nextTools.map((nt) => (
+                      <button
+                        key={nt.id}
+                        type="button"
+                        onClick={() => {
+                          const toPass = (nt.multiple ? results : results.slice(0, 1)).map(
+                            (r, idx) => new File([r.blob], customNames[idx] ?? r.name, { type: r.blob.type })
+                          )
+                          navigate(`/tool/${nt.id}`, { state: { chainedFiles: toPass } })
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 bg-white px-3 py-1.5 text-xs font-bold text-ink-950 shadow-sm hover:border-accent hover:text-accent transition"
+                      >
+                        {nt.name} <ArrowRight className="h-3.5 w-3.5 text-accent" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
       </section>

@@ -135,6 +135,35 @@ check('json formatter rejects invalid', () => { try { TXT.formatJson('{nope', fa
 check('json->xml', TXT.jsonToXml('{"user":{"name":"Ada"}}').includes('<name>Ada</name>'))
 check('csv dedupe', TXT.csvTools('a,b\n1,2\n1,2', 'dedupe', ',').split('\n').length === 2)
 check('csv parse quoted', TXT.parseCsv('"x,y",2')[0][0] === 'x,y')
+check('csv sort-asc & column filter', () => {
+  const sorted = TXT.csvTools('Name,Score\nZoe,5\nAda,10', 'sort-asc', ',', { sortCol: 0, keepCols: [0] })
+  const lines = sorted.split('\n')
+  return lines[0] === 'Name' && lines[1] === 'Ada' && lines[2] === 'Zoe'
+})
+check('csv filter & find-replace', () => {
+  const filtered = TXT.csvTools('Name,Role\nAda,Engineer\nBob,Sales', 'filter', ',', { filterQuery: 'Engineer' })
+  const replaced = TXT.csvTools(filtered, 'find-replace', ',', { findText: 'Engineer', replaceText: 'Lead' })
+  return replaced.includes('Ada,Lead') && !replaced.includes('Bob')
+})
+
+// Upgraded DOCX in-place find & replace + Markdown table rebuild
+const replacedDocx = await OFF.replaceInDocx(docxA, 'Alpha body', 'Upgraded Alpha body', true)
+const replacedTxt = await (await OFF.wordToText(asFile(replacedDocx.blob, 'rep.docx', OFF.DOCX_TYPE))).blob.text()
+check('replaceInDocx preserves doc and replaces text', replacedTxt.includes('Upgraded Alpha body'))
+
+const mdDocx = await OFF.textToDocx('# Heading\n**Bold** and *italic*\n| ColA | ColB |\n| --- | --- |\n| Val1 | Val2 |', 'md.docx')
+const mdTxt = await (await OFF.wordToText(asFile(mdDocx.blob, 'md.docx', OFF.DOCX_TYPE))).blob.text()
+check('textToDocx supports markdown bold and tables', mdTxt.includes('Bold') && mdTxt.includes('Val1'))
+
+const mediaInfo = await OFF.inspectOfficeMedia(docxA)
+check('inspectOfficeMedia returns summary', mediaInfo.count === 0 && mediaInfo.totalBytes > 0)
+
+// Upgraded AES-256 Encrypted ZIP roundtrip
+const encZip = await TXT.createZip([asFile(new Blob(['secret payload 123']), 'secret.txt', 'text/plain')], { password: 'correct-horse-battery' })
+const encSummary = await TXT.listZipEntries(asFile(encZip.blob, 'enc.zip', 'application/zip'))
+check('listZipEntries detects AES-256 encrypted archive', encSummary.encrypted === true)
+const decFiles = await TXT.extractZip(asFile(encZip.blob, 'enc.zip', 'application/zip'), { password: 'correct-horse-battery' })
+check('encrypted zip decrypts with correct password', (await decFiles[0].blob.text()) === 'secret payload 123')
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

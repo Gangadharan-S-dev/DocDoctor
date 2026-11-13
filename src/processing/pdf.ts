@@ -440,19 +440,51 @@ export async function renderPageImage(bytes: ArrayBuffer, pageNum: number, scale
   return c.toDataURL('image/jpeg', 0.85)
 }
 
-interface TextItem { str: string; x: number; y: number; w: number }
+export interface RichTextLine {
+  text: string
+  fontSize: number
+  isBold: boolean
+  x: number
+  y: number
+  pageWidth: number
+  pageHeight: number
+  cells: string[]
+}
 
-/** Extract text lines per page (grouped by baseline), for PDF→Word/Excel conversion. */
-export async function extractTextPages(bytes: ArrayBuffer): Promise<{ lines: string[]; rows: string[][] }[]> {
+interface TextItem {
+  str: string
+  x: number
+  y: number
+  w: number
+  fontSize: number
+  isBold: boolean
+}
+
+/** Extract text lines per page (grouped by baseline) with style & column metadata, for PDF→Word/Excel/PPTX conversion. */
+export async function extractTextPages(bytes: ArrayBuffer): Promise<{ lines: string[]; rows: string[][]; richLines: RichTextLine[] }[]> {
   const pdf = await loadPdfJs(bytes.slice(0))
-  const pages: { lines: string[]; rows: string[][] }[] = []
+  const pages: { lines: string[]; rows: string[][]; richLines: RichTextLine[] }[] = []
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
+    const vp1 = page.getViewport({ scale: 1 })
     const tc = await page.getTextContent()
+    const styles = (tc as unknown as { styles?: Record<string, { fontFamily?: string }> }).styles ?? {}
     const items: TextItem[] = tc.items
-      .filter((it): it is typeof it & { str: string; transform: number[]; width: number } => 'str' in it && typeof (it as { str?: unknown }).str === 'string')
-      .map((it) => ({ str: it.str, x: it.transform[4], y: Math.round(it.transform[5]), w: it.width }))
-      .filter((it) => it.str.length)
+      .filter((it): it is typeof it & { str: string; transform: number[]; width: number; fontName?: string } => 'str' in it && typeof (it as { str?: unknown }).str === 'string')
+      .map((it) => {
+        const fontSize = Math.max(6, Math.round(Math.hypot(it.transform[0] || 0, it.transform[1] || 0) || Math.abs(it.transform[3] || 11)))
+        const fontRef = `${it.fontName ?? ''} ${styles[it.fontName ?? '']?.fontFamily ?? ''}`
+        const isBold = /bold|black|heavy|demi/i.test(fontRef)
+        return {
+          str: it.str,
+          x: it.transform[4],
+          y: Math.round(it.transform[5]),
+          w: it.width || it.str.length * (fontSize * 0.5),
+          fontSize,
+          isBold,
+        }
+      })
+      .filter((it) => it.str.length > 0)
     // Group items into lines by baseline y (top-down), then sort by x.
     const byLine = new Map<number, TextItem[]>()
     for (const it of items) {
@@ -462,9 +494,44 @@ export async function extractTextPages(bytes: ArrayBuffer): Promise<{ lines: str
     }
     const sorted = [...byLine.entries()].sort((a, b) => b[0] - a[0])
       .map(([, its]) => its.sort((a, b) => a.x - b.x))
+
+    const richLines: RichTextLine[] = []
+    for (const its of sorted) {
+      const text = its.map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim()
+      if (!text) continue
+      // Group items into tabular cells when horizontal gap > 16pt
+      const cells: string[] = []
+      let curCell = ''
+      let prevEnd: number | null = null
+      for (const it of its) {
+        if (prevEnd !== null && it.x - prevEnd > 16) {
+          if (curCell.trim()) cells.push(curCell.trim())
+          curCell = it.str
+        } else {
+          curCell = curCell ? `${curCell} ${it.str}`.replace(/\s+/g, ' ') : it.str
+        }
+        prevEnd = it.x + Math.max(4, it.w)
+      }
+      if (curCell.trim()) cells.push(curCell.trim())
+
+      const maxFont = Math.max(...its.map((it) => it.fontSize))
+      const boldCount = its.filter((it) => it.isBold).length
+      richLines.push({
+        text,
+        fontSize: maxFont,
+        isBold: boldCount >= Math.ceil(its.length / 2),
+        x: its[0].x,
+        y: its[0].y,
+        pageWidth: vp1.width || 595,
+        pageHeight: vp1.height || 842,
+        cells: cells.length ? cells : [text],
+      })
+    }
+
     pages.push({
-      lines: sorted.map((its) => its.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean),
-      rows: sorted.map((its) => its.map((i) => i.str.trim()).filter(Boolean)),
+      lines: richLines.map((l) => l.text),
+      rows: richLines.map((l) => l.cells),
+      richLines,
     })
   }
   closePdf(pdf)
@@ -516,15 +583,68 @@ export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png'
   return outs
 }
 
+/** Compute line-level additions and removals between two page line arrays. */
+export function diffPageLines(linesA: string[], linesB: string[]): {
+  identical: boolean
+  added: string[]
+  removed: string[]
+  unchangedCount: number
+} {
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+  const aNorm = linesA.map(norm).filter(Boolean)
+  const bNorm = linesB.map(norm).filter(Boolean)
+  const countMapA = new Map<string, number>()
+  const countMapB = new Map<string, number>()
+  for (const l of aNorm) countMapA.set(l, (countMapA.get(l) ?? 0) + 1)
+  for (const l of bNorm) countMapB.set(l, (countMapB.get(l) ?? 0) + 1)
+
+  const removed: string[] = []
+  const added: string[] = []
+  let unchangedCount = 0
+
+  const usedB = new Map<string, number>()
+  for (const l of aNorm) {
+    const inB = countMapB.get(l) ?? 0
+    const used = usedB.get(l) ?? 0
+    if (used < inB) {
+      usedB.set(l, used + 1)
+      unchangedCount++
+    } else {
+      removed.push(l)
+    }
+  }
+  const usedA = new Map<string, number>()
+  for (const l of bNorm) {
+    const inA = countMapA.get(l) ?? 0
+    const used = usedA.get(l) ?? 0
+    if (used < inA) {
+      usedA.set(l, used + 1)
+    } else {
+      added.push(l)
+    }
+  }
+
+  return {
+    identical: removed.length === 0 && added.length === 0 && aNorm.length === bNorm.length,
+    added,
+    removed,
+    unchangedCount,
+  }
+}
+
 /**
  * Compare two PDF files side-by-side: renders each page pair onto a split canvas,
- * highlighting page differences, and bundles the result as a comparison PDF.
+ * highlighting page differences + text diffs, and bundles the result as a comparison PDF + text diff report.
  */
 export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promise<OutputFile[]> {
   if (files.length < 2) throw new Error('Please select at least two PDF documents to compare.')
   const [fA, fB] = files
   const bytesA = await fA.arrayBuffer()
   const bytesB = await fB.arrayBuffer()
+  const [textPagesA, textPagesB] = await Promise.all([
+    extractTextPages(bytesA.slice(0)).catch(() => []),
+    extractTextPages(bytesB.slice(0)).catch(() => []),
+  ])
   const pdfA = await loadPdfJs(bytesA.slice(0))
   const pdfB = await loadPdfJs(bytesB.slice(0))
   const countA = pdfA.numPages
@@ -533,20 +653,32 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
 
   const doc = await PDFDocument.create()
   const scale = 1.2
-  const W = 1200, H = 850
-  const headerH = 50
+  const W = 1200, H = 900
+  const headerH = 52
+  const footerH = 68
+
+  let identicalPages = 0
+  let changedPages = 0
 
   const summaryLines: string[] = [
-    `DocDoctor PDF Comparison Report`,
+    `DocDoctor PDF Comparison & Text Diff Report`,
     `Generated: ${new Date().toLocaleString()}`,
     `Document A: ${fA.name} (${countA} pages)`,
     `Document B: ${fB.name} (${countB} pages)`,
     `Total comparison pages generated: ${maxPages}`,
-    `----------------------------------------\n`,
+    `========================================\n`,
   ]
 
   for (let i = 1; i <= maxPages; i++) {
     throwIfAborted(opts.signal)
+    const linesA = textPagesA[i - 1]?.lines ?? []
+    const linesB = textPagesB[i - 1]?.lines ?? []
+    const diff = diffPageLines(linesA, linesB)
+    const bothExist = i <= countA && i <= countB
+    const isMatch = bothExist && diff.identical
+    if (isMatch) identicalPages++
+    else changedPages++
+
     const c = document.createElement('canvas')
     c.width = W
     c.height = H
@@ -558,20 +690,32 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     ctx.fillStyle = '#0b1526'
     ctx.fillRect(0, 0, W, headerH)
     ctx.fillStyle = '#ffffff'
-    ctx.font = 'bold 15px system-ui, sans-serif'
-    ctx.fillText(`Doc A: ${fA.name} (Page ${i <= countA ? i : '-'} of ${countA})`, 25, 31)
-    ctx.fillText(`Doc B: ${fB.name} (Page ${i <= countB ? i : '-'} of ${countB})`, W / 2 + 25, 31)
+    ctx.font = 'bold 14px system-ui, sans-serif'
+    ctx.fillText(`Doc A: ${fA.name} (Page ${i <= countA ? i : '-'} of ${countA})`, 24, 31)
+    ctx.fillText(`Doc B: ${fB.name} (Page ${i <= countB ? i : '-'} of ${countB})`, W / 2 + 24, 31)
+
+    // Status pill in center of header
+    const badgeText = isMatch
+      ? '✓ TEXT MATCH'
+      : !bothExist
+        ? '⚠ PAGE COUNT DIFF'
+        : `⚠ ${diff.removed.length} REMOVED · ${diff.added.length} ADDED`
+    ctx.fillStyle = isMatch ? '#10b981' : '#f59e0b'
+    ctx.fillRect(W / 2 - 110, 12, 220, 28)
+    ctx.fillStyle = '#0b1526'
+    ctx.font = 'bold 11px system-ui, sans-serif'
+    ctx.fillText(badgeText, W / 2 - 96, 30)
 
     // Vertical divider
     ctx.strokeStyle = '#cbd5e1'
     ctx.lineWidth = 2
     ctx.beginPath()
     ctx.moveTo(W / 2, headerH)
-    ctx.lineTo(W / 2, H)
+    ctx.lineTo(W / 2, H - footerH)
     ctx.stroke()
 
     const halfW = W / 2 - 40
-    const availH = H - headerH - 40
+    const availH = H - headerH - footerH - 30
 
     if (i <= countA) {
       const pA = await pdfA.getPage(i)
@@ -587,13 +731,12 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
       const drawW = pageCanvasA.width * s
       const drawH = pageCanvasA.height * s
       const offX = 20 + (halfW - drawW) / 2
-      const offY = headerH + 20 + (availH - drawH) / 2
+      const offY = headerH + 15 + (availH - drawH) / 2
       ctx.drawImage(pageCanvasA, offX, offY, drawW, drawH)
     } else {
       ctx.fillStyle = '#94a3b8'
       ctx.font = 'italic 16px system-ui, sans-serif'
-      ctx.fillText('(No corresponding page in Doc A)', 80, H / 2)
-      summaryLines.push(`Page ${i}: Doc A has no page (Doc B has page ${i}).`)
+      ctx.fillText('(No corresponding page in Doc A)', 80, (H - footerH) / 2)
     }
 
     if (i <= countB) {
@@ -610,14 +753,53 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
       const drawW = pageCanvasB.width * s
       const drawH = pageCanvasB.height * s
       const offX = W / 2 + 20 + (halfW - drawW) / 2
-      const offY = headerH + 20 + (availH - drawH) / 2
+      const offY = headerH + 15 + (availH - drawH) / 2
       ctx.drawImage(pageCanvasB, offX, offY, drawW, drawH)
     } else {
       ctx.fillStyle = '#94a3b8'
       ctx.font = 'italic 16px system-ui, sans-serif'
-      ctx.fillText('(No corresponding page in Doc B)', W / 2 + 80, H / 2)
-      summaryLines.push(`Page ${i}: Doc B has no page (Doc A has page ${i}).`)
+      ctx.fillText('(No corresponding page in Doc B)', W / 2 + 80, (H - footerH) / 2)
     }
+
+    // Bottom text-diff strip on canvas
+    ctx.fillStyle = isMatch ? '#ecfdf5' : '#fffbeb'
+    ctx.fillRect(0, H - footerH, W, footerH)
+    ctx.strokeStyle = isMatch ? '#a7f3d0' : '#fde68a'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, H - footerH)
+    ctx.lineTo(W, H - footerH)
+    ctx.stroke()
+
+    ctx.font = '12px monospace'
+    if (isMatch) {
+      ctx.fillStyle = '#065f46'
+      ctx.fillText(`Page ${i}: All ${diff.unchangedCount} text line(s) match between Document A and Document B.`, 24, H - footerH + 38)
+    } else {
+      ctx.fillStyle = '#991b1b'
+      const remPreview = diff.removed[0] ? `- ${diff.removed[0].slice(0, 75)}` : '(no lines removed)'
+      ctx.fillText(remPreview, 24, H - footerH + 26)
+      ctx.fillStyle = '#065f46'
+      const addPreview = diff.added[0] ? `+ ${diff.added[0].slice(0, 75)}` : '(no lines added)'
+      ctx.fillText(addPreview, 24, H - footerH + 48)
+    }
+
+    // Append detailed text diff to summary report
+    summaryLines.push(`--- Page ${i} ---`)
+    if (i > countA) {
+      summaryLines.push(`Status: Added page in Document B (Document A has only ${countA} pages).`)
+      diff.added.slice(0, 30).forEach((l) => summaryLines.push(`  + ${l}`))
+    } else if (i > countB) {
+      summaryLines.push(`Status: Removed page in Document B (Document B has only ${countB} pages).`)
+      diff.removed.slice(0, 30).forEach((l) => summaryLines.push(`  - ${l}`))
+    } else if (diff.identical) {
+      summaryLines.push(`Status: IDENTICAL (${diff.unchangedCount} lines matched)`)
+    } else {
+      summaryLines.push(`Status: MODIFIED (${diff.unchangedCount} unchanged, ${diff.removed.length} removed, ${diff.added.length} added)`)
+      diff.removed.slice(0, 30).forEach((l) => summaryLines.push(`  - [Doc A] ${l}`))
+      diff.added.slice(0, 30).forEach((l) => summaryLines.push(`  + [Doc B] ${l}`))
+    }
+    summaryLines.push('')
 
     const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Comparison render failed.'))), 'image/jpeg', 0.85))
     const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()))
@@ -626,6 +808,8 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     opts.onProgress?.(i, maxPages)
     await new Promise((r) => setTimeout(r, 0))
   }
+
+  summaryLines.splice(5, 0, `Summary: ${identicalPages} identical page(s), ${changedPages} page(s) with differences`)
 
   closePdf(pdfA)
   closePdf(pdfB)

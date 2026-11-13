@@ -2,6 +2,8 @@ import type { Tool } from '../../data/tools'
 import type { OutputFile } from '../../processing/download'
 import type { ImgFormat } from '../../processing/image'
 import type { PageOp } from '../../processing/pdf'
+import type { PdfAnnotation, SignPlacement } from '../../processing/advanced'
+import type { CsvAction } from '../../processing/text'
 
 export interface RunSettings {
   quality: number
@@ -28,28 +30,51 @@ export interface RunSettings {
   splitMode: 'heading' | 'paragraphs'
   txtTo: 'txt' | 'html' | 'md'
   jsonMinify: boolean
-  csvAction: 'dedupe' | 'trim'
+  csvAction: CsvAction
+  csvOutDelim?: string
+  csvSortCol?: number
+  csvFilterQuery?: string
+  csvFindText?: string
+  csvReplaceText?: string
+  csvKeepCols?: number[]
   editText: string
+  wordEditMode?: 'editor' | 'replace'
+  wordFind?: string
+  wordReplace?: string
+  wordMatchCase?: boolean
   pdfText: string
   pdfPage: number
   pdfX: number
   pdfY: number
   pdfSize: number
   pdfColor: string
-  pdfEditMode?: 'text' | 'redact'
+  pdfEditMode?: 'text' | 'redact' | 'highlight'
   pdfFont?: 'Helvetica' | 'TimesRoman' | 'Courier'
   pdfRedactW?: number
   pdfRedactH?: number
+  pdfAnnotations?: PdfAnnotation[]
+  pdfDestructiveRedact?: boolean
   sigData: string | null
   signPos: 'bottom-right' | 'bottom-left' | 'center' | 'custom'
   sigWidth?: number
+  signAllPages?: boolean
+  signDateStamp?: string
+  signPlacements?: SignPlacement[]
+  pptxMode?: 'image' | 'editable'
   pwd: string
   pwd2: string
+  zipLevel?: number
+  zipPassword?: string
+  zipArchiveName?: string
+  zipFilterNames?: string[]
   blockSel: number[]
   gridValue: number[] | PageOp[]
   ocrLang: string
   ocrFormat: 'txt' | 'pdf' | 'docx' | 'both'
   excelOrientation?: 'landscape' | 'portrait'
+  excelGridlines?: boolean
+  officeMediaQuality?: number
+  officeMediaMaxEdge?: number
   pdfNumFormat?: string
   pdfNumStart?: number
   pdfNumSize?: number
@@ -134,9 +159,9 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         smoothing: s.smoothing,
         bgColor: s.imgBgColor,
       }))
-      case 'crop-image': return [await IMG.cropImage(f0, s.crop.x, s.crop.y, s.crop.w, s.crop.h, {
+      case 'crop-image': return batch(fs, (f) => IMG.cropImage(f, s.crop.x, s.crop.y, s.crop.w, s.crop.h, {
         circular: s.cropCircular,
-      })]
+      }))
       case 'jpg-to-png': case 'png-to-jpg': case 'jpg-to-webp': case 'png-to-webp': {
         const t: ImgFormat = id.endsWith('png') ? 'image/png' : id.endsWith('webp') ? 'image/webp' : 'image/jpeg'
         return batch(fs, (f) => IMG.convertImage(f, t, s.quality / 100, { bgColor: s.imgBgColor }))
@@ -159,7 +184,7 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         margin: s.imgPdfMargin,
         orientation: s.imgPdfOrientation,
       })]
-      case 'ico-converter': return [await IMG.imageToIco(f0, s.icoSizes?.length ? s.icoSizes : [16, 24, 32, 48, 64])]
+      case 'ico-converter': return batch(fs, (f) => IMG.imageToIco(f, s.icoSizes?.length ? s.icoSizes : [16, 24, 32, 48, 64]))
     }
   }
   if (PDF_IDS.has(id)) {
@@ -170,22 +195,22 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'remove-pdf-pages': return [await PDF.removePages(f0, s.gridValue as number[])]
       case 'extract-pdf-pages': return [await PDF.extractPages(f0, s.gridValue as number[])]
       case 'organize-pdf': return [await PDF.organizePdf(f0, s.gridValue as PageOp[])]
-      case 'rotate-pdf': return [await PDF.rotatePdf(f0, s.angle, 'all')]
+      case 'rotate-pdf': return batch(fs, (f) => PDF.rotatePdf(f, s.angle, 'all'))
       case 'compress-pdf': return [await PDF.compressPdf(f0, s.level, proc)]
-      case 'pdf-page-numbers': return [await PDF.addPageNumbers(
-        f0,
+      case 'pdf-page-numbers': return batch(fs, (f) => PDF.addPageNumbers(
+        f,
         s.pos,
         s.pdfNumStart ?? 1,
         s.pdfNumFormat ?? 'Page {n} of {total}',
         { fontSize: s.pdfNumSize, colorHex: s.pdfNumColor, skipCover: s.pdfNumSkipCover }
-      )]
-      case 'pdf-watermark': return [await PDF.watermarkPdf(
-        f0,
+      ))
+      case 'pdf-watermark': return batch(fs, (f) => PDF.watermarkPdf(
+        f,
         s.wmText || 'DocDoctor',
         s.wmOpacity,
         s.pdfWmSize ?? 48,
         { angle: s.pdfWmAngle, colorHex: s.pdfWmColor }
-      )]
+      ))
       case 'pdf-to-jpg': case 'pdf-to-image': return PDF.pdfToImages(f0, 'image/jpeg', s.scale, proc)
       case 'pdf-to-png': return PDF.pdfToImages(f0, 'image/png', s.scale, proc)
       case 'compare-pdf': return PDF.comparePdfs(fs, proc)
@@ -193,42 +218,65 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
   }
   if (OFFICE_IDS.has(id)) {
     const OFF = await import('../../processing/office')
+    const mediaOpts = {
+      quality: s.officeMediaQuality ? s.officeMediaQuality / 100 : undefined,
+      maxEdge: s.officeMediaMaxEdge,
+    }
     switch (id) {
-      case 'word-to-txt': case 'extract-word-text': return [await OFF.wordToText(f0)]
-      case 'word-to-html': return [await OFF.wordToHtml(f0)]
-      case 'compress-docx': return [await OFF.recompressPackage(f0, `${f0.name.replace(/\.docx$/i, '')}-compressed.docx`, OFF.DOCX_TYPE)]
+      case 'word-to-txt': case 'extract-word-text': return batch(fs, (f) => OFF.wordToText(f))
+      case 'word-to-html': return batch(fs, (f) => OFF.wordToHtml(f))
+      case 'compress-docx': return batch(fs, (f) => OFF.recompressPackage(f, `${f.name.replace(/\.docx$/i, '')}-compressed.docx`, OFF.DOCX_TYPE, mediaOpts))
       case 'merge-word': return [await OFF.mergeWord(fs)]
       case 'split-word': return OFF.splitWord(f0, s.splitMode)
-      case 'edit-word': return [await OFF.textToDocx(s.editText, `${f0.name.replace(/\.docx$/i, '')}-edited.docx`)]
-      case 'compress-powerpoint': return [await OFF.recompressPackage(f0, `${f0.name.replace(/\.pptx$/i, '')}-compressed.pptx`, OFF.PPTX_TYPE)]
+      case 'edit-word': {
+        if (s.wordEditMode === 'replace') {
+          return [await OFF.replaceInDocx(f0, s.wordFind ?? '', s.wordReplace ?? '', s.wordMatchCase)]
+        }
+        return [await OFF.textToDocx(s.editText, `${f0.name.replace(/\.docx$/i, '')}-edited.docx`)]
+      }
+      case 'compress-powerpoint': return batch(fs, (f) => OFF.recompressPackage(f, `${f.name.replace(/\.pptx$/i, '')}-compressed.pptx`, OFF.PPTX_TYPE, mediaOpts))
       case 'merge-presentations': return [await OFF.mergePresentations(fs)]
       case 'split-presentations': return OFF.splitPresentation(f0)
       case 'remove-slides': return [await OFF.removeSlides(f0, s.slideSel)]
       case 'extract-slides': return [await OFF.extractSlides(f0, s.slideSel)]
       case 'reorder-slides': return [await OFF.reorderSlides(f0, s.slideOrder)]
-      case 'xls-to-xlsx': return [await OFF.xlsToXlsx(f0)]
-      case 'csv-to-excel': return [await OFF.csvToExcel(f0)]
+      case 'xls-to-xlsx': return batch(fs, (f) => OFF.xlsToXlsx(f))
+      case 'csv-to-excel': return batch(fs, (f) => OFF.csvToExcel(f))
       case 'excel-to-csv': return OFF.excelToCsv(f0)
       case 'merge-excel': return [await OFF.mergeExcel(fs)]
       case 'split-worksheets': return OFF.splitWorksheets(f0)
       case 'remove-worksheets': return [await OFF.removeWorksheets(f0, s.sheetSel)]
-      case 'compress-excel': return [await OFF.recompressPackage(f0, `${f0.name.replace(/\.xlsx$/i, '')}-compressed.xlsx`, OFF.XLSX_TYPE)]
-      case 'excel-to-html': return [await OFF.excelToHtml(f0)]
-      case 'xlsx-to-pdf': case 'excel-to-pdf': return [await OFF.excelToPdf(f0, { orientation: s.excelOrientation })]
+      case 'compress-excel': return batch(fs, (f) => OFF.recompressPackage(f, `${f.name.replace(/\.xlsx$/i, '')}-compressed.xlsx`, OFF.XLSX_TYPE, mediaOpts))
+      case 'excel-to-html': return batch(fs, (f) => OFF.excelToHtml(f))
+      case 'xlsx-to-pdf': case 'excel-to-pdf': return [await OFF.excelToPdf(f0, { orientation: s.excelOrientation, showGridlines: s.excelGridlines })]
       case 'remove-word-pages': case 'docx-page-remover': return [await OFF.removeDocxPages(f0, s.blockSel)]
     }
   }
   if (TEXT_IDS.has(id)) {
     const TXT = await import('../../processing/text')
     switch (id) {
-      case 'zip-files': return [await TXT.createZip(fs)]
-      case 'extract-zip': return TXT.extractZip(f0)
-      case 'html-to-txt': return [await TXT.htmlToText(f0)]
-      case 'txt-converter': case 'markdown-converter': return [await TXT.convertText(f0, s.txtTo)]
+      case 'zip-files': return [await TXT.createZip(fs, {
+        level: s.zipLevel,
+        password: s.zipPassword,
+        archiveName: s.zipArchiveName,
+      })]
+      case 'extract-zip': return TXT.extractZip(f0, {
+        password: s.zipPassword,
+        filterNames: s.zipFilterNames,
+      })
+      case 'html-to-txt': return batch(fs, (f) => TXT.htmlToText(f))
+      case 'txt-converter': case 'markdown-converter': return batch(fs, (f) => TXT.convertText(f, s.txtTo))
       case 'json-formatter': return [{ name: f0.name, blob: new Blob([TXT.formatJson(await f0.text(), s.jsonMinify, s.jsonIndent ?? 2)], { type: 'application/json' }) }]
       case 'json-to-xml': return [{ name: `${f0.name.replace(/\.json$/i, '')}.xml`, blob: new Blob([TXT.jsonToXml(await f0.text())], { type: 'application/xml' }) }]
       case 'xml-formatter': return [{ name: f0.name, blob: new Blob([TXT.formatXml(await f0.text())], { type: 'application/xml' }) }]
-      case 'csv-tools': return [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), s.csvAction, s.csvDelim || ',')], { type: 'text/csv' }) }]
+      case 'csv-tools': return [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), s.csvAction, s.csvDelim || ',', {
+        outDelimiter: s.csvOutDelim || s.csvDelim || ',',
+        sortCol: s.csvSortCol,
+        filterQuery: s.csvFilterQuery,
+        findText: s.csvFindText,
+        replaceText: s.csvReplaceText,
+        keepCols: s.csvKeepCols,
+      })], { type: 'text/csv' }) }]
     }
   }
   if (ADVANCED_IDS.has(id)) {
@@ -236,20 +284,27 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
     switch (id) {
       case 'edit-pdf': return [await ADV.editPdfAddText(f0, s.pdfText, s.pdfPage, s.pdfX, s.pdfY, s.pdfSize, s.pdfColor, {
         isRedact: s.pdfEditMode === 'redact',
+        isHighlight: s.pdfEditMode === 'highlight',
         fontFamily: s.pdfFont,
         redactWidth: s.pdfRedactW,
         redactHeight: s.pdfRedactH,
+        annotations: s.pdfAnnotations,
+        destructiveRedact: s.pdfDestructiveRedact,
       })]
       case 'sign-pdf': {
         if (!s.sigData) throw new Error('Draw your signature first.')
         const sigBytes = new Uint8Array(await (await fetch(s.sigData)).arrayBuffer())
         const pos = s.signPos === 'custom' ? { xPct: s.pdfX, yPct: s.pdfY, width: s.sigWidth } : s.signPos
-        return [await ADV.signPdf(f0, sigBytes, s.pdfPage, pos)]
+        return [await ADV.signPdf(f0, sigBytes, s.pdfPage, pos, {
+          allPages: s.signAllPages,
+          dateStamp: s.signDateStamp,
+          placements: s.signPlacements,
+        })]
       }
-      case 'repair-pdf': return [await ADV.repairPdf(f0)]
+      case 'repair-pdf': return batch(fs, (f) => ADV.repairPdf(f))
       case 'pdf-to-word': case 'pdf-to-docx': return [await ADV.pdfToDocx(f0)]
       case 'pdf-to-excel': return [await ADV.pdfToExcel(f0)]
-      case 'pdf-to-powerpoint': case 'pdf-to-pptx': return [await ADV.pdfToPowerpoint(f0, s.scale)]
+      case 'pdf-to-powerpoint': case 'pdf-to-pptx': return [await ADV.pdfToPowerpoint(f0, s.scale, { mode: s.pptxMode })]
       case 'word-to-pdf': case 'docx-to-pdf': return [await ADV.docxToPdf(f0)]
       case 'epub-to-pdf': return [await ADV.epubToPdf(f0)]
     }
@@ -258,9 +313,9 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
     const CRY = await import('../../processing/crypto')
     if (id === 'protect-pdf') {
       if (s.pwd !== s.pwd2) throw new Error('Passwords do not match.')
-      return [await CRY.protectPdf(f0, s.pwd)]
+      return batch(fs, (f) => CRY.protectPdf(f, s.pwd))
     }
-    return [await CRY.unlockPdf(f0, s.pwd)]
+    return batch(fs, (f) => CRY.unlockPdf(f, s.pwd))
   }
   throw new Error('This engine is not available yet.')
 }

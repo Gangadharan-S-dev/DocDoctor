@@ -54,5 +54,9 @@ await check('compress extreme output is never larger than input', async () => (a
 await check('page numbers valid', async () => (await pages(await PDF.addPageNumbers(a, 'bottom-center', 1, 'Page {n} of {total}'))) === 3)
 await check('watermark valid', async () => (await pages(await PDF.watermarkPdf(a, 'TEST', 0.3, 48))) === 3)
 await check('parseRanges', () => PDF.parseRanges('1-2, 3', 5).join(',') === '0,1,2')
+await check('diffPageLines detects added and removed lines', () => {
+  const diff = PDF.diffPageLines(['Line A', 'Line B'], ['Line A', 'Line C'])
+  return diff.unchangedCount === 1 && diff.removed.includes('Line B') && diff.added.includes('Line C')
+})
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

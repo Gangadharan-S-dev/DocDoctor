@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Eraser, Loader2, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Pen, Type, Upload } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Eraser, Loader2, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Pen, Type, Upload, BookmarkPlus, Trash2 } from 'lucide-react'
 import { renderPageImage, pdfPageCount } from '../processing/pdf'
 
 const INK_COLORS = [
@@ -20,7 +20,32 @@ const SCRIPT_FONTS = [
   { label: 'Formal Signature', family: '"Lucida Handwriting", "Segoe Print", cursive' },
 ]
 
-/** Multi-mode signature pad: Draw freehand, Type with script fonts, or Upload an image. Emits a PNG data URL. */
+const SAVED_SIG_KEY = 'dd_saved_signatures_v1'
+
+interface SavedSigProfile {
+  id: string
+  label: string
+  dataUrl: string
+}
+
+function loadSavedSignatures(): SavedSigProfile[] {
+  try {
+    const raw = localStorage.getItem(SAVED_SIG_KEY)
+    return raw ? (JSON.parse(raw) as SavedSigProfile[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveSignaturesList(list: SavedSigProfile[]) {
+  try {
+    localStorage.setItem(SAVED_SIG_KEY, JSON.stringify(list.slice(0, 5)))
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+/** Multi-mode signature pad: Draw freehand, Type with script fonts, or Upload an image + Saved Profiles. */
 export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
   const [mode, setMode] = useState<'draw' | 'type' | 'upload'>('draw')
   const [color, setColor] = useState('#002D62')
@@ -28,6 +53,13 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
   const [typedName, setTypedName] = useState('')
   const [fontFamily, setFontFamily] = useState(SCRIPT_FONTS[0].family)
   const [uploadedName, setUploadedName] = useState<string | null>(null)
+  const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [savedProfiles, setSavedProfiles] = useState<SavedSigProfile[]>(() => loadSavedSignatures())
+
+  const emitChange = (url: string | null) => {
+    setCurrentUrl(url)
+    onChange(url)
+  }
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
@@ -56,7 +88,7 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
 
   const emitDraw = () => {
     if (dirty.current && canvasRef.current) {
-      onChange(canvasRef.current.toDataURL('image/png'))
+      emitChange(canvasRef.current.toDataURL('image/png'))
     }
   }
 
@@ -65,17 +97,13 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
       const c = canvasRef.current
       c.getContext('2d')!.clearRect(0, 0, c.width, c.height)
       dirty.current = false
-      onChange(null)
+      emitChange(null)
     }
   }
 
   // Generate typed signature when name/font/color change
-  useEffect(() => {
-    if (mode !== 'type') return
-    if (!typedName.trim()) {
-      onChange(null)
-      return
-    }
+  const typedDataUrl = useMemo(() => {
+    if (mode !== 'type' || !typedName.trim()) return null
     const c = document.createElement('canvas')
     c.width = 600
     c.height = 180
@@ -86,8 +114,15 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(typedName.trim(), c.width / 2, c.height / 2)
-    onChange(c.toDataURL('image/png'))
-  }, [mode, typedName, fontFamily, color, onChange])
+    return c.toDataURL('image/png')
+  }, [mode, typedName, fontFamily, color])
+
+  useEffect(() => {
+    if (mode !== 'type') return
+    onChange(typedDataUrl)
+  }, [mode, typedDataUrl, onChange])
+
+  const activeSigUrl = mode === 'type' ? typedDataUrl : currentUrl
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -95,36 +130,97 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
     setUploadedName(file.name)
     const reader = new FileReader()
     reader.onload = () => {
-      onChange(reader.result as string)
+      emitChange(reader.result as string)
     }
     reader.readAsDataURL(file)
   }
 
+  const saveCurrentProfile = () => {
+    if (!activeSigUrl) return
+    const next: SavedSigProfile = {
+      id: `${Date.now()}`,
+      label: mode === 'type' && typedName.trim() ? typedName.trim() : `Signature ${savedProfiles.length + 1}`,
+      dataUrl: activeSigUrl,
+    }
+    const updated = [next, ...savedProfiles.filter((p) => p.dataUrl !== activeSigUrl)].slice(0, 4)
+    setSavedProfiles(updated)
+    saveSignaturesList(updated)
+  }
+
+  const removeSavedProfile = (id: string) => {
+    const updated = savedProfiles.filter((p) => p.id !== id)
+    setSavedProfiles(updated)
+    saveSignaturesList(updated)
+  }
+
   return (
     <div className="space-y-3">
+      {/* Saved signature profiles */}
+      {savedProfiles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-2.5 text-xs">
+          <span className="font-bold text-slate-500">Saved Signatures:</span>
+          {savedProfiles.map((p) => (
+            <div
+              key={p.id}
+              className={`flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 shadow-sm transition ${activeSigUrl === p.dataUrl ? 'border-accent ring-1 ring-accent' : 'border-slate-200'}`}
+            >
+              <button
+                type="button"
+                onClick={() => emitChange(p.dataUrl)}
+                className="flex items-center gap-1.5 font-bold text-ink-950 hover:text-accent"
+                title="Load saved signature"
+              >
+                <img src={p.dataUrl} alt={p.label} className="h-5 w-12 object-contain" />
+                <span>{p.label}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => removeSavedProfile(p.id)}
+                className="text-slate-400 hover:text-red-600"
+                aria-label={`Remove ${p.label}`}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Mode tabs */}
-      <div className="flex items-center gap-1 border-b border-slate-200 pb-2">
-        <button
-          type="button"
-          onClick={() => { setMode('draw'); onChange(null) }}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'draw' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-        >
-          <Pen className="h-3.5 w-3.5" /> Draw
-        </button>
-        <button
-          type="button"
-          onClick={() => { setMode('type'); onChange(null) }}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'type' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-        >
-          <Type className="h-3.5 w-3.5" /> Type
-        </button>
-        <button
-          type="button"
-          onClick={() => { setMode('upload'); onChange(null) }}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'upload' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-        >
-          <Upload className="h-3.5 w-3.5" /> Upload Image
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => { setMode('draw'); emitChange(null) }}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'draw' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            <Pen className="h-3.5 w-3.5" /> Draw
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMode('type'); emitChange(null) }}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'type' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            <Type className="h-3.5 w-3.5" /> Type
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMode('upload'); emitChange(null) }}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${mode === 'upload' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            <Upload className="h-3.5 w-3.5" /> Upload Image
+          </button>
+        </div>
+        {activeSigUrl && (
+          <button
+            type="button"
+            onClick={saveCurrentProfile}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+            title="Save this signature locally in your browser for future documents"
+          >
+            <BookmarkPlus className="h-3.5 w-3.5 text-accent" /> Save signature for reuse
+          </button>
+        )}
       </div>
 
       {/* Style bar (for draw and type modes) */}
@@ -251,9 +347,16 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) 
   )
 }
 
+export interface QueuedOverlay {
+  x: number
+  y: number
+  label: string
+  color?: string
+}
+
 /** Renders one PDF page with page navigation; clicking sets placement coordinates (% from top-left). */
 export function PagePlacement({
-  file, page, x, y, onPick, onPageChange, stampPreview, stampText, textColor, textSize,
+  file, page, x, y, onPick, onPageChange, stampPreview, stampText, textColor, textSize, queuedOverlays,
 }: {
   file: File
   page: number
@@ -265,6 +368,7 @@ export function PagePlacement({
   stampText?: string | null
   textColor?: string
   textSize?: number
+  queuedOverlays?: QueuedOverlay[]
 }) {
   const [state, setState] = useState<{ file: File; page: number; img: string; done: boolean }>({ file, page, img: '', done: false })
   const [totalPages, setTotalPages] = useState<number | null>(null)
@@ -355,6 +459,16 @@ export function PagePlacement({
           }}
         >
           <img src={img} alt={`Page ${page} preview`} className="block w-full pointer-events-none" />
+          {/* Render queued items on this page */}
+          {queuedOverlays?.map((ov, idx) => (
+            <div
+              key={idx}
+              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded border border-emerald-600 bg-emerald-50/90 px-2 py-0.5 text-[11px] font-bold text-emerald-950 shadow-sm whitespace-nowrap"
+              style={{ left: `${ov.x}%`, top: `${ov.y}%`, borderColor: ov.color || '#059669' }}
+            >
+              ✓ {ov.label}
+            </div>
+          ))}
           {stampPreview ? (
             <div
               className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded border border-dashed border-accent bg-white/70 p-1 shadow-md backdrop-blur-[1px]"

@@ -39,9 +39,17 @@ const textOf = async (blob) => (await PDFE.extractTextPages(await blob.arrayBuff
 const edited = await ADV.editPdfAddText(pdfFile, 'APPROVED 2026', 1, 10, 10, 18, '#cc0000')
 check('edit pdf stamps text', (await textOf(edited.blob)).includes('APPROVED 2026'))
 
+const multiEdited = await ADV.editPdfAddText(pdfFile, '', 1, 10, 10, 14, '#000000', {
+  annotations: [
+    { mode: 'text', text: 'STAMP ONE', pageNum: 1, xPct: 15, yPct: 20, size: 14, colorHex: '#112233', fontFamily: 'Helvetica' },
+    { mode: 'highlight', pageNum: 1, xPct: 15, yPct: 30, colorHex: '#facc15', width: 120, height: 20 },
+  ],
+})
+check('edit pdf multi-annotation queue stamps text and highlight', (await textOf(multiEdited.blob)).includes('STAMP ONE'))
+
 const png1x1 = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'))
-const signed = await ADV.signPdf(pdfFile, png1x1, 1, 'bottom-right')
-check('sign pdf embeds signature', (await PDFDocument.load(await signed.blob.arrayBuffer())).getPageCount() === 1)
+const signed = await ADV.signPdf(pdfFile, png1x1, 1, 'bottom-right', { dateStamp: 'Signed 2026-11-13', allPages: true })
+check('sign pdf embeds signature and date stamp', (await textOf(signed.blob)).includes('Signed 2026-11-13'))
 const signedCustom = await ADV.signPdf(pdfFile, png1x1, 1, { xPct: 50, yPct: 50 })
 check('sign pdf custom coords embeds signature', (await PDFDocument.load(await signedCustom.blob.arrayBuffer())).getPageCount() === 1)
 

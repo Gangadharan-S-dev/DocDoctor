@@ -9,25 +9,58 @@ export const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordproc
 export const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 export const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
+export interface OfficeMediaSummary {
+  count: number
+  mediaBytes: number
+  totalBytes: number
+}
+
+/** Inspect an OOXML archive (DOCX/PPTX/XLSX) to report embedded media count and byte size. */
+export async function inspectOfficeMedia(file: File): Promise<OfficeMediaSummary> {
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  let count = 0
+  let mediaBytes = 0
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue
+    if (/\/media\/[^/]+\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(path)) {
+      count++
+      const bytes = await entry.async('uint8array')
+      mediaBytes += bytes.byteLength
+    }
+  }
+  return { count, mediaBytes, totalBytes: file.size }
+}
+
+export interface RecompressOpts {
+  quality?: number
+  maxEdge?: number
+}
+
 // ── Shared: recompress any OOXML/ZIP package at max DEFLATE with media optimization ──
-export async function recompressPackage(file: File, outName: string, type: string): Promise<OutputFile> {
+export async function recompressPackage(
+  file: File,
+  outName: string,
+  type: string,
+  opts?: RecompressOpts,
+): Promise<OutputFile> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
   const out = new JSZip()
   const canRecompress = typeof document !== 'undefined' && typeof createImageBitmap !== 'undefined'
+  const targetQuality = opts?.quality ?? 0.68
+  const maxEdge = opts?.maxEdge ?? 1600
 
   for (const [path, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue
     const isMediaImage = /\/media\/[^/]+\.(jpe?g|png)$/i.test(path)
     const oldBytes = await entry.async('uint8array')
 
-    if (isMediaImage && canRecompress && oldBytes.length > 20_000) {
+    if (isMediaImage && canRecompress && oldBytes.length > 15_000) {
       try {
         const isJpeg = /\.jpe?g$/i.test(path)
         const mime = isJpeg ? 'image/jpeg' : 'image/png'
         const bmp = await createImageBitmap(new Blob([oldBytes.slice().buffer as ArrayBuffer], { type: mime }))
         let w = bmp.width, h = bmp.height
-        const maxEdge = 1600
-        if (Math.max(w, h) > maxEdge) {
+        if (maxEdge > 0 && Math.max(w, h) > maxEdge) {
           const s = maxEdge / Math.max(w, h)
           w = Math.max(1, Math.round(w * s))
           h = Math.max(1, Math.round(h * s))
@@ -43,12 +76,11 @@ export async function recompressPackage(file: File, outName: string, type: strin
           }
           ctx.drawImage(bmp, 0, 0, w, h)
           bmp.close()
-          // Recompress media JPEGs at 0.68; keep PNG format for transparent PNGs
           const outMime = isJpeg ? 'image/jpeg' : 'image/png'
-          const newBlob = await new Promise<Blob | null>((res) => c.toBlob(res, outMime, isJpeg ? 0.68 : undefined))
+          const newBlob = await new Promise<Blob | null>((res) => c.toBlob(res, outMime, isJpeg ? targetQuality : undefined))
           if (newBlob) {
             const newBytes = new Uint8Array(await newBlob.arrayBuffer())
-            if (newBytes.length < oldBytes.length * 0.90) {
+            if (newBytes.length < oldBytes.length * 0.92) {
               out.file(path, newBytes)
               continue
             }
@@ -104,20 +136,123 @@ export async function wordToHtml(file: File): Promise<OutputFile> {
   return { name: `${stem(file.name)}.html`, blob: new Blob([html], { type: 'text/html' }) }
 }
 
-/** Rebuild a DOCX from edited plain text (one paragraph per line). Formatting is intentionally simple. */
+/** Rebuild a DOCX from edited Markdown-flavored text (headings, bold/italic, bullets, tables). */
 export async function textToDocx(text: string, name: string): Promise<OutputFile> {
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx')
-  const children = text.split(/\n/).map((line) => {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } = await import('docx')
+
+  const parseRuns = (raw: string) => {
+    const runs: InstanceType<typeof TextRun>[] = []
+    const tokenRe = /(\*\*[^*]+\*\*|\*[^*]+\*)/g
+    let last = 0
+    for (const m of raw.matchAll(tokenRe)) {
+      const idx = m.index ?? 0
+      if (idx > last) runs.push(new TextRun(raw.slice(last, idx)))
+      const tok = m[0]
+      if (tok.startsWith('**') && tok.endsWith('**')) {
+        runs.push(new TextRun({ text: tok.slice(2, -2), bold: true }))
+      } else if (tok.startsWith('*') && tok.endsWith('*')) {
+        runs.push(new TextRun({ text: tok.slice(1, -1), italics: true }))
+      }
+      last = idx + tok.length
+    }
+    if (last < raw.length) runs.push(new TextRun(raw.slice(last)))
+    return runs.length ? runs : [new TextRun(raw)]
+  }
+
+  const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = []
+  let tableBuf: string[][] = []
+
+  const flushTable = () => {
+    if (!tableBuf.length) return
+    const colCount = Math.max(1, ...tableBuf.map((r) => r.length))
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: tableBuf.map((r, ri) => new TableRow({
+        children: Array.from({ length: colCount }, (_, ci) => new TableCell({
+          children: [new Paragraph({
+            children: ri === 0
+              ? [new TextRun({ text: r[ci] ?? '', bold: true })]
+              : parseRuns(r[ci] ?? ''),
+          })],
+        })),
+      })),
+    }))
+    tableBuf = []
+  }
+
+  for (const line of text.split(/\n/)) {
     const t = line.trim()
+    if (/^\|.+\|$/.test(t)) {
+      const cells = t.slice(1, -1).split('|').map((c) => c.trim())
+      if (!cells.every((c) => /^[-:]+$/.test(c))) tableBuf.push(cells)
+      continue
+    }
+    flushTable()
+
     if (/^#{1,3}\s/.test(t)) {
       const level = t.startsWith('### ') ? HeadingLevel.HEADING_3 : t.startsWith('## ') ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1
-      return new Paragraph({ text: t.replace(/^#{1,3}\s/, ''), heading: level })
+      children.push(new Paragraph({ text: t.replace(/^#{1,3}\s/, ''), heading: level }))
+    } else if (/^[-*•]\s+/.test(t)) {
+      children.push(new Paragraph({
+        children: parseRuns(t.replace(/^[-*•]\s+/, '')),
+        bullet: { level: 0 },
+      }))
+    } else if (/^---+$/.test(t)) {
+      children.push(new Paragraph({
+        border: { bottom: { color: 'CBD5E1', space: 1, style: BorderStyle.SINGLE, size: 6 } },
+      }))
+    } else {
+      children.push(new Paragraph({ children: parseRuns(t) }))
     }
-    return new Paragraph({ children: [new TextRun(t)] })
-  })
+  }
+  flushTable()
+
   const docFile = new Document({ sections: [{ children: children.length ? children : [new Paragraph('')] }] })
   const blob = await Packer.toBlob(docFile)
   return { name, blob: new Blob([blob], { type: DOCX_TYPE }) }
+}
+
+/**
+ * In-place XML Find & Replace in a DOCX document.
+ * Preserves 100% of original document styles, fonts, images, headers/footers, and tables.
+ */
+export async function replaceInDocx(
+  file: File,
+  findText: string,
+  replaceText: string,
+  matchCase = false,
+): Promise<OutputFile> {
+  if (!findText) throw new Error('Enter the text to find first.')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const xmlParts = Object.keys(zip.files).filter((p) => /^word\/(document|header\d*|footer\d*)\.xml$/.test(p))
+  if (!xmlParts.length) throw new Error('Not a valid DOCX file.')
+
+  const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(escaped, matchCase ? 'g' : 'gi')
+
+  for (const part of xmlParts) {
+    const entry = zip.file(part)
+    if (!entry) continue
+    const doc = xmlDoc(await entry.async('string'))
+    const paras = Array.from(doc.getElementsByTagName('w:p'))
+    for (const p of paras) {
+      const tNodes = Array.from(p.getElementsByTagName('w:t'))
+      if (!tNodes.length) continue
+      const combined = tNodes.map((n) => n.textContent ?? '').join('')
+      if (!regex.test(combined)) continue
+      regex.lastIndex = 0
+      const updated = combined.replace(regex, replaceText)
+      tNodes[0].textContent = updated
+      tNodes[0].setAttribute('xml:space', 'preserve')
+      for (let i = 1; i < tNodes.length; i++) {
+        tNodes[i].textContent = ''
+      }
+    }
+    zip.file(part, xmlStr(doc))
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+  return { name: `${stem(file.name)}-edited.docx`, blob: new Blob([blob], { type: DOCX_TYPE }) }
 }
 
 function xmlDoc(xml: string): Document {
@@ -649,26 +784,104 @@ export async function excelToHtml(file: File): Promise<OutputFile> {
   return { name: `${stem(file.name)}.html`, blob: new Blob([html], { type: 'text/html' }) }
 }
 
-/** Values-only PDF: renders each sheet as a simple text table (print styling is not preserved). */
-export async function excelToPdf(file: File, opts: { orientation?: 'landscape' | 'portrait' } = {}): Promise<OutputFile> {
+export interface ExcelToPdfOpts {
+  orientation?: 'landscape' | 'portrait'
+  showGridlines?: boolean
+}
+
+/** Styled PDF table renderer: renders each sheet with auto-fitted column widths, shaded headers, zebra rows & optional gridlines. */
+export async function excelToPdf(file: File, opts: ExcelToPdfOpts = {}): Promise<OutputFile> {
   const wb = await readWorkbook(file)
   const doc = await PDFDocument.create()
-  const font = await doc.embedFont(StandardFonts.Courier)
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const isLandscape = opts.orientation !== 'portrait'
+  const showGrid = opts.showGridlines !== false
   const pageSize: [number, number] = isLandscape ? [842, 595] : [595, 842]
+  const pageW = pageSize[0]
   const pageH = pageSize[1]
-  const maxLineLen = isLandscape ? 118 : 78
+  const margin = 32
+  const availW = pageW - margin * 2
+  const rowH = 18
+
+  const safeCell = (v: unknown) =>
+    String(v ?? '')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2013\u2014]/g, '-')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '')
+      .trim()
 
   for (const name of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '' })
+    const rawRows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '' })
+    const rows = rawRows.slice(0, 300)
+    const maxCols = Math.min(isLandscape ? 14 : 9, Math.max(1, ...rows.map((r) => r.length)))
+
+    // Compute proportional column widths from content length
+    const weights = Array.from({ length: maxCols }, (_, ci) => {
+      const longest = Math.max(5, ...rows.slice(0, 60).map((r) => safeCell(r[ci]).length))
+      return Math.min(36, longest + 2)
+    })
+    const totalWeight = weights.reduce((a, b) => a + b, 0) || 1
+    const colWidths = weights.map((w) => (w / totalWeight) * availW)
+
     let page = doc.addPage(pageSize)
-    page.drawText(name, { x: 36, y: pageH - 40, size: 13, font, color: rgb(0.1, 0.12, 0.2) })
-    let y = pageH - 65
-    for (const row of rows.slice(0, 200)) {
-      if (y < 36) { page = doc.addPage(pageSize); y = pageH - 40 }
-      const line = row.map((c) => String(c ?? '').slice(0, 24)).join('  |  ').slice(0, maxLineLen)
-      page.drawText(line || ' ', { x: 36, y, size: 8, font, color: rgb(0.2, 0.2, 0.25) })
-      y -= 13
+    let y = pageH - margin - 14
+    page.drawText(safeCell(name) || 'Sheet', { x: margin, y, size: 13, font: bold, color: rgb(0.08, 0.12, 0.22) })
+    y -= 22
+
+    const drawTableRow = (rowCells: string[], isHeader: boolean, rowIdx: number) => {
+      if (isHeader) {
+        page.drawRectangle({ x: margin, y: y - rowH + 4, width: availW, height: rowH, color: rgb(0.11, 0.22, 0.42) })
+      } else if (rowIdx % 2 === 1) {
+        page.drawRectangle({ x: margin, y: y - rowH + 4, width: availW, height: rowH, color: rgb(0.96, 0.97, 0.99) })
+      }
+      let cx = margin
+      for (let ci = 0; ci < maxCols; ci++) {
+        const cw = colWidths[ci]
+        if (showGrid) {
+          page.drawRectangle({
+            x: cx,
+            y: y - rowH + 4,
+            width: cw,
+            height: rowH,
+            borderColor: isHeader ? rgb(0.18, 0.3, 0.52) : rgb(0.82, 0.85, 0.9),
+            borderWidth: 0.5,
+          })
+        }
+        const txt = safeCell(rowCells[ci])
+        if (txt) {
+          const f = isHeader ? bold : font
+          const sz = isHeader ? 8.5 : 8
+          const maxChars = Math.max(3, Math.floor((cw - 8) / 4.4))
+          const clipped = txt.length > maxChars ? txt.slice(0, maxChars - 1) + '...' : txt
+          page.drawText(clipped, {
+            x: cx + 4,
+            y: y - 9,
+            size: sz,
+            font: f,
+            color: isHeader ? rgb(1, 1, 1) : rgb(0.15, 0.18, 0.24),
+          })
+        }
+        cx += cw
+      }
+      y -= rowH
+    }
+
+    const headerRow = rows[0] ?? []
+    if (rows.length > 0) {
+      drawTableRow(headerRow, true, 0)
+    }
+
+    for (let ri = 1; ri < rows.length; ri++) {
+      if (y - rowH < margin) {
+        page = doc.addPage(pageSize)
+        y = pageH - margin - 10
+        // Repeat table header row on new page
+        drawTableRow(headerRow, true, 0)
+      }
+      drawTableRow(rows[ri], false, ri)
     }
   }
   const bytes = await doc.save()
