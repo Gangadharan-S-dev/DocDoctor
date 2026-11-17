@@ -52,13 +52,35 @@ export function SlidePicker({ file, onChange }: { file: File; onChange: (parts: 
           <button type="button" onClick={() => setAll(new Set())} className="text-accent hover:underline">Clear</button>
         </div>
       </div>
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul className="grid gap-2.5 sm:grid-cols-2">
         {slides.map((s, i) => (
           <li key={s.part}>
-            <label className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${sel.has(s.part) ? 'border-accent bg-accent-soft/60 ring-2 ring-accent/20' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-              <input type="checkbox" checked={sel.has(s.part)} onChange={() => toggle(s.part)} className="h-4 w-4 shrink-0 accent-[#1D6FF2]" />
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-xs font-extrabold text-orange-600">{i + 1}</span>
-              <span className="min-w-0 truncate text-sm font-bold text-ink-950" title={s.title}>{s.title}</span>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition ${sel.has(s.part) ? 'border-accent bg-accent-soft/60 ring-2 ring-accent/20' : 'border-slate-200 bg-white hover:border-slate-300 shadow-sm'}`}>
+              <input type="checkbox" checked={sel.has(s.part)} onChange={() => toggle(s.part)} className="mt-1 h-4 w-4 shrink-0 accent-[#1D6FF2]" />
+              <div className="flex h-12 w-16 shrink-0 flex-col justify-between overflow-hidden rounded-lg border border-orange-200 bg-gradient-to-br from-orange-50 to-white p-1.5 shadow-inner">
+                <span className="h-1 w-full rounded-full bg-orange-400" />
+                <span className="text-[10px] font-extrabold text-orange-700">#{i + 1}</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-bold text-ink-950" title={s.title}>{s.title}</span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {(s.imageCount ?? 0) > 0 && (
+                      <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700 ring-1 ring-teal-200/60">
+                        {s.imageCount} img
+                      </span>
+                    )}
+                    {s.notesPreview && (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700" title={s.notesPreview}>
+                        Notes
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {s.snippet && (
+                  <p className="mt-0.5 line-clamp-1 text-xs text-slate-500" title={s.snippet}>{s.snippet}</p>
+                )}
+              </div>
             </label>
           </li>
         ))}
@@ -106,7 +128,18 @@ export function SlideReorder({ file, onChange }: { file: File; onChange: (parts:
         >
           <GripVertical className="h-4 w-4 cursor-grab active:cursor-grabbing text-slate-400" />
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ink-950 text-xs font-extrabold text-white">{i + 1}</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink-950" title={s.title}>{s.title}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-bold text-ink-950" title={s.title}>{s.title}</span>
+              {(s.imageCount ?? 0) > 0 && (
+                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">{s.imageCount} img</span>
+              )}
+              {s.notesPreview && (
+                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700" title={s.notesPreview}>Notes</span>
+              )}
+            </div>
+            {s.snippet && <p className="truncate text-xs text-slate-500">{s.snippet}</p>}
+          </div>
           <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
           <button type="button" aria-label="Move down" disabled={i === order.length - 1} onClick={() => move(i, 1)} className="rounded-lg p-2 hover:bg-slate-100 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
         </li>

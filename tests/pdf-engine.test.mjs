@@ -58,5 +58,36 @@ await check('diffPageLines detects added and removed lines', () => {
   const diff = PDF.diffPageLines(['Line A', 'Line B'], ['Line A', 'Line C'])
   return diff.unchangedCount === 1 && diff.removed.includes('Line B') && diff.added.includes('Line C')
 })
+await check('mergePdfs with per-file ranges & bookmarks', async () => {
+  const out = await PDF.mergePdfs([a, b], { fileRanges: { 0: '1,3' }, addBookmarks: true })
+  return (await pages(out)) === 3
+})
+await check('splitPdf every-n mode', async () => {
+  const parts = await PDF.splitPdf(a, '', { mode: 'every-n', everyN: 2 })
+  return parts.length === 2 && (await pages(parts[0])) === 2 && (await pages(parts[1])) === 1
+})
+await check('splitPdf all-individual mode', async () => {
+  const parts = await PDF.splitPdf(a, '', { mode: 'all-individual' })
+  return parts.length === 3
+})
+await check('rotatePdf odd filter only rotates odd pages', async () => {
+  const out = await PDF.rotatePdf(a, 180, 'all', { filter: 'odd' })
+  const d = await PDFDocument.load(await out.blob.arrayBuffer())
+  return d.getPage(0).getRotation().angle === 180 && d.getPage(1).getRotation().angle === 0 && d.getPage(2).getRotation().angle === 180
+})
+await check('addPageNumbers supports top-right + roman numerals + page range', async () => {
+  const out = await PDF.addPageNumbers(a, 'top-right', 1, 'Page {n} of {total}', {
+    numStyle: 'roman-upper',
+    fontFamily: 'TimesRoman',
+    pageRange: '2-3',
+  })
+  return (await pages(out)) === 3 && PDF.toRoman(4, true) === 'IV'
+})
+await check('watermarkPdf supports tiled text and image watermark', async () => {
+  const png1x1 = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'))
+  const tiled = await PDF.watermarkPdf(a, 'CONFIDENTIAL', 0.25, 36, { position: 'tile' })
+  const imgWm = await PDF.watermarkPdf(a, '', 0.5, 36, { position: 'bottom-right', imageBytes: png1x1, imageMime: 'image/png', imageScale: 0.2 })
+  return (await pages(tiled)) === 3 && (await pages(imgWm)) === 3
+})
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

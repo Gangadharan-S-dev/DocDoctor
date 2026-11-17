@@ -6,12 +6,21 @@ const pdfBlob = (bytes: Uint8Array) => new Blob([bytes.buffer as ArrayBuffer], {
 const isEncryptedError = (e: unknown) =>
   e instanceof Error && (e.name === 'EncryptedPDFError' || /encrypted/i.test(e.message))
 
+export interface ProtectPdfOpts {
+  ownerPassword?: string
+  allowPrinting?: boolean
+  allowCopying?: boolean
+  allowModifying?: boolean
+  allowAnnotating?: boolean
+}
+
 /**
  * Encrypt a PDF with AES-256 (ISO 32000-2) via the @cantoo/pdf-lib fork.
+ * Supports both user (open) password, optional owner password, and granular permissions.
  * The output is verified before success: it must refuse to open without the
  * password and open with it.
  */
-export async function protectPdf(file: File, password: string): Promise<OutputFile> {
+export async function protectPdf(file: File, password: string, opts?: ProtectPdfOpts): Promise<OutputFile> {
   if (!password || password.length < 4) throw new Error('Use a password of at least 4 characters.')
   const bytes = await file.arrayBuffer()
   let doc
@@ -21,7 +30,21 @@ export async function protectPdf(file: File, password: string): Promise<OutputFi
     if (isEncryptedError(e)) throw new Error('This PDF is already password-protected. Unlock it first, then protect it with a new password.', { cause: e })
     throw new Error('Could not open this PDF — it may be damaged.', { cause: e })
   }
-  doc.encrypt({ userPassword: password, algorithm: 'AES-256' })
+  const ownerPwd = opts?.ownerPassword?.trim() || password
+  doc.encrypt({
+    userPassword: password,
+    ownerPassword: ownerPwd,
+    algorithm: 'AES-256',
+    permissions: {
+      printing: opts?.allowPrinting === false ? false : 'highResolution',
+      copying: opts?.allowCopying ?? true,
+      modifying: opts?.allowModifying ?? false,
+      annotating: opts?.allowAnnotating ?? true,
+      fillingForms: opts?.allowAnnotating ?? true,
+      contentAccessibility: true,
+      documentAssembly: opts?.allowModifying ?? false,
+    },
+  })
   const out = await doc.save()
   // Self-verification: never hand back a file that does not actually lock.
   try {

@@ -106,7 +106,7 @@ export const TOOLS: Tool[] = [
   T({ id: 'remove-slides', name: 'Remove Slides', description: 'Select slides visually and remove them from the deck.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: Layers, phase: 3, engine: 'OOXML + thumbnails' }),
   T({ id: 'extract-slides', name: 'Extract Slides', description: 'Export selected slides as a new presentation.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: Scissors, phase: 3, engine: 'OOXML + thumbnails' }),
   T({ id: 'reorder-slides', name: 'Reorder Slides', description: 'Drag slides into a new order and download.', category: 'powerpoint', accept: '.pptx', acceptLabel: 'PPTX', maxSizeMB: 100, multiple: false, icon: Layers, phase: 3, engine: 'OOXML + thumbnails' }),
-  T({ id: 'slides-to-images', name: 'Slides to Images', description: 'Export every slide as JPG or PNG.', category: 'powerpoint', accept: '.pptx,.ppt', acceptLabel: 'PPT / PPTX', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 3, engine: 'LibreOffice + render' }),
+  T({ id: 'slides-to-images', name: 'Slides to Images', description: 'Export every slide as JPG or PNG.', category: 'powerpoint', accept: '.pptx,.ppt', acceptLabel: 'PPT / PPTX', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 3, engine: 'Browser OOXML slide renderer (LibreOffice server optional)' }),
   // ── Excel (Phase 3) ────────────────────────────────────────────
   T({ id: 'xlsx-to-pdf', name: 'XLSX to PDF', description: 'Convert workbooks to print-ready PDF.', category: 'excel', accept: '.xlsx,.xls', acceptLabel: 'XLS / XLSX', maxSizeMB: 50, multiple: false, icon: FileText, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'xls-to-xlsx', name: 'XLS to XLSX', description: 'Upgrade legacy .xls workbooks to modern .xlsx.', category: 'excel', accept: '.xls', acceptLabel: 'XLS', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 3, engine: 'SheetJS' }),
@@ -150,10 +150,10 @@ export const IMPLEMENTED_IDS = new Set([
   'json-formatter', 'json-to-xml', 'xml-formatter', 'csv-tools', 'file-metadata',
   // Phase 4 — advanced, browser engines with disclosed simplifications.
   'edit-pdf', 'sign-pdf', 'repair-pdf', 'pdf-to-word', 'pdf-to-docx', 'pdf-to-excel',
-  // Phase 5 — AES-256 encryption (@cantoo/pdf-lib) + safe Word content removal.
-  // Server-gated only: pptx-to-pdf + slides-to-images (LibreOffice service).
+  // Phase 5 — AES-256 encryption (@cantoo/pdf-lib) + safe Word content removal + in-browser PPTX rendering.
   'protect-pdf', 'unlock-pdf', 'remove-word-pages', 'docx-page-remover',
   'pdf-to-powerpoint', 'pdf-to-pptx', 'word-to-pdf', 'docx-to-pdf', 'epub-to-pdf',
+  'pptx-to-pdf', 'slides-to-images',
   'ocr-pdf', 'image-ocr', 'compare-pdf',
 ])
 export const isImplemented = (t: Tool) => IMPLEMENTED_IDS.has(t.id)
@@ -163,7 +163,7 @@ export const SERVER_TOOL_IDS: Record<string, string> = {
   'pptx-to-pdf': 'pptx-to-pdf',
   'slides-to-images': 'slides-to-images',
 }
-export const isServerTool = (t: Tool) => t.id in SERVER_TOOL_IDS
+export const isServerTool = (t: Tool) => (t.id in SERVER_TOOL_IDS) && !IMPLEMENTED_IDS.has(t.id)
 
 /** Browser-live tools that gain a full-fidelity LibreOffice server option when the service is connected. */
 export const SERVER_UPGRADE_IDS: Record<string, string> = {
@@ -171,6 +171,8 @@ export const SERVER_UPGRADE_IDS: Record<string, string> = {
   'word-to-pdf': 'docx-to-pdf',
   'xlsx-to-pdf': 'xlsx-to-pdf',
   'excel-to-pdf': 'xlsx-to-pdf',
+  'pptx-to-pdf': 'pptx-to-pdf',
+  'slides-to-images': 'slides-to-images',
 }
 export const serverEndpointFor = (t: Tool): string | undefined => SERVER_TOOL_IDS[t.id] ?? SERVER_UPGRADE_IDS[t.id]
 

@@ -165,5 +165,48 @@ check('listZipEntries detects AES-256 encrypted archive', encSummary.encrypted =
 const decFiles = await TXT.extractZip(asFile(encZip.blob, 'enc.zip', 'application/zip'), { password: 'correct-horse-battery' })
 check('encrypted zip decrypts with correct password', (await decFiles[0].blob.text()) === 'secret payload 123')
 
+// Upgraded PPTX -> PDF & Slides -> Images in-browser rendering + range splitting
+const pptxPdf = await OFF.pptxToPdf(pptxFile, { includeNotes: true })
+check('pptxToPdf renders valid 3-page PDF in browser', (await PDFDocument.load(await pptxPdf.blob.arrayBuffer())).getPageCount() === 3)
+const slideImgs = await OFF.slidesToImages(pptxFile, 'image/png', 1)
+check('slidesToImages exports 3 slide images', slideImgs.length === 3 && slideImgs[0].name.endsWith('.png'))
+const splitRangeDeck = await OFF.splitPresentation(pptxFile, { mode: 'ranges', ranges: '1-2; 3' })
+check('splitPresentation supports custom slide ranges', splitRangeDeck.length === 2 && (await deckOrder(splitRangeDeck[0])).length === 2)
+
+// Upgraded DOCX match counter & multi-rule replace
+const matchCount = await OFF.countDocxMatches(docxA, 'Alpha', false)
+check('countDocxMatches counts occurrences across DOCX', matchCount >= 2)
+const multiRuleDocx = await OFF.replaceInDocx(docxA, '', '', false, [
+  { find: 'Alpha Doc', replace: 'Omega Title' },
+  { find: 'Second section', replace: 'Final section' },
+])
+const multiRuleTxt = await (await OFF.wordToText(asFile(multiRuleDocx.blob, 'mr.docx', OFF.DOCX_TYPE))).blob.text()
+check('replaceInDocx applies multiple rules in one pass', multiRuleTxt.includes('Omega Title') && multiRuleTxt.includes('Final section'))
+
+// Upgraded Excel preview, multi-CSV merge, and filtered sheet export
+const excelPrev = await OFF.previewExcel(xlsxFile)
+check('previewExcel inspects all sheets and row counts', excelPrev.length === 2 && excelPrev[0].name === 'People' && excelPrev[0].totalRows === 3)
+const multiCsvWb = await OFF.csvToExcel([csvFile, asFile(new Blob(['x,y\n9,8'], { type: 'text/csv' }), 'second.csv', 'text/csv')])
+check('csvToExcel merges multiple CSVs into multi-sheet XLSX', (await OFF.sheetNames(asFile(multiCsvWb.blob, 'mc.xlsx', OFF.XLSX_TYPE))).length === 2)
+const filteredCsvOut = await OFF.excelToCsv(xlsxFile, { sheets: ['Cities'], delimiter: ';', utf8Bom: true })
+const bomBytes = new Uint8Array(await filteredCsvOut[0].blob.arrayBuffer())
+check('excelToCsv filters sheets and supports custom delimiter + BOM', filteredCsvOut.length === 1 && bomBytes[0] === 0xef && bomBytes[1] === 0xbb && bomBytes[2] === 0xbf && (await filteredCsvOut[0].blob.text()).includes('City'))
+
+// Upgraded JSON sortKeys, jsonToCsv, CSV multi-step pipeline, and Deep File Metadata + Sanitizer
+check('formatJson sortKeys sorts object keys alphabetically', TXT.formatJson('{"z":1,"a":2}', true, 2, { sortKeys: true }) === '{"a":2,"z":1}')
+check('jsonToCsv converts JSON array to CSV table', TXT.jsonToCsv('[{"name":"Ada","score":10}]').includes('name,score\nAda,10'))
+const multiCsvClean = TXT.csvTools(' Name , Score \n Zoe , 5 \n Zoe , 5 \n Ada , 10 ', 'sort-asc', ',', {
+  sortCol: 0,
+  trimAll: true,
+  dedupeAll: true,
+  renameCols: { 0: 'Student' },
+})
+check('csvTools multi-step pipeline trims, dedupes, sorts, and renames headers', multiCsvClean.startsWith('Student,Score\nAda,10\nZoe,5'))
+
+const deepDocxMeta = await TXT.fileMetadata(docxA)
+check('fileMetadata computes SHA-1/256/512 and detects office kind', Boolean(deepDocxMeta.sha1 && deepDocxMeta.sha256 && deepDocxMeta.sha512 && deepDocxMeta.kind === 'office' && deepDocxMeta.canScrub))
+const scrubbedDocx = await TXT.scrubFileMetadata(docxA)
+check('scrubFileMetadata produces valid sanitized DOCX', scrubbedDocx.blob.size > 0 && scrubbedDocx.name.endsWith('-sanitized.docx'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { RotateCcw, Circle } from 'lucide-react'
+import { RotateCcw, Circle, Grid } from 'lucide-react'
 
 interface VisualCropProps {
   imageUrl: string
@@ -7,6 +7,8 @@ interface VisualCropProps {
   onChange: (crop: { x: number; y: number; w: number; h: number }) => void
   circular?: boolean
   onCircularChange?: (circular: boolean) => void
+  cornerRadius?: number
+  onCornerRadiusChange?: (radius: number) => void
   imageDims?: { w: number; h: number } | null
 }
 
@@ -26,11 +28,14 @@ export default function VisualCrop({
   onChange,
   circular = false,
   onCircularChange,
+  cornerRadius = 0,
+  onCornerRadiusChange,
   imageDims,
 }: VisualCropProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const previewCanvasRef = useRef<HTMLCanvasElement>(null)
   const [activePreset, setActivePreset] = useState<string>('Free')
+  const [showGrid, setShowGrid] = useState(true)
   const [draggingMode, setDraggingMode] = useState<'move' | 'resize' | null>(null)
   const dragStartRef = useRef<{ clientX: number; clientY: number; crop: { x: number; y: number; w: number; h: number } }>({ clientX: 0, clientY: 0, crop })
 
@@ -67,11 +72,25 @@ export default function VisualCrop({
         ctx.beginPath()
         ctx.arc(canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) / 2, 0, Math.PI * 2)
         ctx.clip()
+      } else if (cornerRadius > 0) {
+        const r = Math.min((cornerRadius / 100) * Math.min(canvas.width, canvas.height), canvas.width / 2, canvas.height / 2)
+        ctx.beginPath()
+        ctx.moveTo(r, 0)
+        ctx.lineTo(canvas.width - r, 0)
+        ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r)
+        ctx.lineTo(canvas.width, canvas.height - r)
+        ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height)
+        ctx.lineTo(r, canvas.height)
+        ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r)
+        ctx.lineTo(0, r)
+        ctx.quadraticCurveTo(0, 0, r, 0)
+        ctx.closePath()
+        ctx.clip()
       }
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
     }
     return () => { alive = false }
-  }, [imageUrl, crop, circular])
+  }, [imageUrl, crop, circular, cornerRadius])
 
   const handlePointerDown = (mode: 'move' | 'resize', e: React.PointerEvent) => {
     e.stopPropagation()
@@ -160,7 +179,16 @@ export default function VisualCrop({
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowGrid(!showGrid)}
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${showGrid ? 'border-accent bg-accent/10 text-accent' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+            title="Toggle rule-of-thirds composition grid"
+          >
+            <Grid className="h-3.5 w-3.5" /> Grid
+          </button>
+
           {onCircularChange && (
             <button
               type="button"
@@ -182,6 +210,22 @@ export default function VisualCrop({
           </button>
         </div>
       </div>
+
+      {!circular && onCornerRadiusChange && (
+        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs">
+          <span className="font-bold text-ink-950 shrink-0">Rounded Corners:</span>
+          <input
+            type="range"
+            min={0}
+            max={50}
+            value={cornerRadius}
+            onChange={(e) => onCornerRadiusChange(+e.target.value)}
+            className="w-40 accent-[#1D6FF2]"
+          />
+          <span className="font-bold text-accent">{cornerRadius}%</span>
+          {cornerRadius > 0 && <span className="text-slate-500">(Exports lossless transparent PNG)</span>}
+        </div>
+      )}
 
       {/* Main Grid: Interactive Canvas & Live Cropped Preview */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -218,17 +262,19 @@ export default function VisualCrop({
               )}
 
               {/* Rule of thirds grid lines */}
-              <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-30">
-                <div className="border-r border-b border-white" />
-                <div className="border-r border-b border-white" />
-                <div className="border-b border-white" />
-                <div className="border-r border-b border-white" />
-                <div className="border-r border-b border-white" />
-                <div className="border-b border-white" />
-                <div className="border-r border-white" />
-                <div className="border-r border-white" />
-                <div />
-              </div>
+              {showGrid && (
+                <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-30">
+                  <div className="border-r border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-r border-b border-white" />
+                  <div className="border-b border-white" />
+                  <div className="border-r border-white" />
+                  <div className="border-r border-white" />
+                  <div />
+                </div>
+              )}
 
               {/* Coordinate label */}
               <div className="pointer-events-none absolute -top-6 left-0 rounded bg-accent px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm">

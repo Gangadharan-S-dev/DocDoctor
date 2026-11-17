@@ -192,10 +192,66 @@ export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promis
 }
 
 // ── JSON / XML ───────────────────────────────────────────────────
-export function formatJson(text: string, minify: boolean, indent: number | string = 2): string {
+export interface FormatJsonOpts {
+  sortKeys?: boolean
+  filterKeyQuery?: string
+}
+
+function transformJsonNode(val: unknown, sortKeys?: boolean, filterKey?: string): unknown {
+  if (Array.isArray(val)) {
+    return val.map((item) => transformJsonNode(item, sortKeys, filterKey))
+  }
+  if (val !== null && typeof val === 'object') {
+    const entries = Object.entries(val as Record<string, unknown>)
+    const filtered = filterKey
+      ? entries.filter(([k, v]) => k.toLowerCase().includes(filterKey) || (v !== null && typeof v === 'object'))
+      : entries
+    if (sortKeys) {
+      filtered.sort(([a], [b]) => a.localeCompare(b))
+    }
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of filtered) {
+      const child = transformJsonNode(v, sortKeys, filterKey)
+      if (filterKey && !k.toLowerCase().includes(filterKey) && child !== null && typeof child === 'object' && !Array.isArray(child) && Object.keys(child as object).length === 0) {
+        continue
+      }
+      out[k] = child
+    }
+    return out
+  }
+  return val
+}
+
+export function formatJson(text: string, minify: boolean, indent: number | string = 2, opts?: FormatJsonOpts): string {
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
+  const q = opts?.filterKeyQuery?.trim().toLowerCase()
+  if (opts?.sortKeys || q) {
+    parsed = transformJsonNode(parsed, opts?.sortKeys, q || undefined)
+  }
   return minify ? JSON.stringify(parsed) : JSON.stringify(parsed, null, indent === 'tab' ? '\t' : Number(indent) || 2)
+}
+
+/** Convert JSON array of objects (or single object) to CSV string. */
+export function jsonToCsv(text: string, delimiter = ','): string {
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
+  const arr: Record<string, unknown>[] = Array.isArray(parsed)
+    ? parsed.map((it) => (it !== null && typeof it === 'object' && !Array.isArray(it) ? (it as Record<string, unknown>) : { value: it }))
+    : parsed !== null && typeof parsed === 'object'
+      ? [parsed as Record<string, unknown>]
+      : [{ value: parsed }]
+  if (!arr.length) return ''
+  const headers = [...new Set(arr.flatMap((row) => Object.keys(row)))]
+  const esc = (v: unknown) => {
+    const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+    return s.includes(delimiter) || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const lines = [
+    headers.map(esc).join(delimiter),
+    ...arr.map((row) => headers.map((h) => esc(row[h])).join(delimiter)),
+  ]
+  return lines.join('\n')
 }
 
 const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -266,6 +322,9 @@ export interface CsvWorkbenchOpts {
   findText?: string
   replaceText?: string
   keepCols?: number[]
+  trimAll?: boolean
+  dedupeAll?: boolean
+  renameCols?: Record<number, string>
 }
 
 export function csvTools(
@@ -277,10 +336,13 @@ export function csvTools(
   let rows = parseCsv(text, delimiter)
   if (!rows.length) return ''
 
-  // Always trim first when requested or during clean operations
-  if (action === 'trim') {
+  // Optional pipeline step 1: trim whitespace across all cells
+  if (action === 'trim' || opts?.trimAll) {
     rows = rows.map((r) => r.map((c) => c.trim()))
-  } else if (action === 'dedupe') {
+  }
+
+  // Optional pipeline step 2: deduplicate rows
+  if (action === 'dedupe' || opts?.dedupeAll) {
     const seen = new Set<string>()
     rows = rows.filter((r) => {
       const k = r.join('\u0000')
@@ -288,7 +350,10 @@ export function csvTools(
       seen.add(k)
       return true
     })
-  } else if (action === 'sort-asc' || action === 'sort-desc') {
+  }
+
+  // Primary action (sort / filter / find-replace)
+  if (action === 'sort-asc' || action === 'sort-desc') {
     const col = opts?.sortCol ?? 0
     const dir = action === 'sort-asc' ? 1 : -1
     const [header, ...body] = rows
@@ -317,6 +382,14 @@ export function csvTools(
     }
   }
 
+  // Optional column renaming on header row
+  if (opts?.renameCols && rows.length > 0) {
+    rows[0] = rows[0].map((hdr, ci) => {
+      const custom = opts.renameCols?.[ci]?.trim()
+      return custom ? custom : hdr
+    })
+  }
+
   // Optional column filtering / selection
   if (opts?.keepCols && opts.keepCols.length > 0) {
     const cols = opts.keepCols
@@ -327,17 +400,179 @@ export function csvTools(
   return rows.map((r) => r.map((c) => csvCell(c, outDelim)).join(outDelim)).join('\n')
 }
 
-// ── Generic file metadata ────────────────────────────────────────
-export interface FileMeta { name: string; size: number; type: string; modified: string; sha256: string }
+// ── Deep File Metadata Inspector & Sanitizer ─────────────────────
+export interface FileMeta {
+  name: string
+  size: number
+  type: string
+  modified: string
+  sha1: string
+  sha256: string
+  sha512: string
+  kind?: 'pdf' | 'office' | 'archive' | 'other'
+  canScrub?: boolean
+  documentProps?: Record<string, string>
+}
+
+const toHex = (buf: ArrayBuffer) =>
+  [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 
 export async function fileMetadata(file: File): Promise<FileMeta> {
-  const buf = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  const sha256 = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const rawBuf = await file.arrayBuffer()
+  const [h1, h256, h512] = await Promise.all([
+    crypto.subtle.digest('SHA-1', rawBuf),
+    crypto.subtle.digest('SHA-256', rawBuf),
+    crypto.subtle.digest('SHA-512', rawBuf),
+  ])
+
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
+  const documentProps: Record<string, string> = {}
+  let kind: FileMeta['kind'] = 'other'
+  let canScrub = false
+
+  if (ext === 'pdf' || file.type === 'application/pdf') {
+    kind = 'pdf'
+    try {
+      const { PDFDocument } = await import('pdf-lib')
+      const doc = await PDFDocument.load(rawBuf, { ignoreEncryption: true, updateMetadata: false })
+      canScrub = !doc.isEncrypted
+      documentProps['Page Count'] = `${doc.getPageCount()} pages`
+      documentProps['Encrypted'] = doc.isEncrypted ? 'Yes (Password Protected)' : 'No'
+      const title = doc.getTitle()
+      const author = doc.getAuthor()
+      const subject = doc.getSubject()
+      const keywords = doc.getKeywords()
+      const creator = doc.getCreator()
+      const producer = doc.getProducer()
+      const created = doc.getCreationDate()
+      const modified = doc.getModificationDate()
+      if (title) documentProps['Title'] = title
+      if (author) documentProps['Author'] = author
+      if (subject) documentProps['Subject'] = subject
+      if (keywords) documentProps['Keywords'] = keywords
+      if (creator) documentProps['Creator Application'] = creator
+      if (producer) documentProps['PDF Producer'] = producer
+      if (created) documentProps['Created Date'] = created.toLocaleString()
+      if (modified) documentProps['Modified Date'] = modified.toLocaleString()
+    } catch {
+      documentProps['PDF Status'] = 'Encrypted or non-standard structure'
+    }
+  } else if (ext === 'docx' || ext === 'pptx' || ext === 'xlsx') {
+    kind = 'office'
+    canScrub = true
+    try {
+      const zip = await JSZip.loadAsync(rawBuf)
+      const coreXml = await zip.file('docProps/core.xml')?.async('string')
+      const appXml = await zip.file('docProps/app.xml')?.async('string')
+      const pickTag = (xml: string | undefined, tag: string) =>
+        xml?.match(new RegExp(`<[^>]*:?${tag}[^>]*>([^<]+)</`, 'i'))?.[1]?.trim()
+
+      const title = pickTag(coreXml, 'title')
+      const creator = pickTag(coreXml, 'creator')
+      const lastModBy = pickTag(coreXml, 'lastModifiedBy')
+      const revision = pickTag(coreXml, 'revision')
+      const created = pickTag(coreXml, 'created')
+      const modified = pickTag(coreXml, 'modified')
+      const app = pickTag(appXml, 'Application')
+      const company = pickTag(appXml, 'Company')
+      const pages = pickTag(appXml, 'Pages')
+      const words = pickTag(appXml, 'Words')
+      const slides = pickTag(appXml, 'Slides')
+
+      if (title) documentProps['Title'] = title
+      if (creator) documentProps['Author / Creator'] = creator
+      if (lastModBy) documentProps['Last Modified By'] = lastModBy
+      if (company) documentProps['Company / Organization'] = company
+      if (app) documentProps['Application'] = app
+      if (revision) documentProps['Revision Number'] = revision
+      if (pages) documentProps['Pages'] = pages
+      if (words) documentProps['Word Count'] = words
+      if (slides) documentProps['Slides'] = slides
+      if (created) documentProps['Created'] = created
+      if (modified) documentProps['Modified'] = modified
+    } catch {
+      // ignore
+    }
+  } else if (ext === 'zip' || file.type.includes('zip')) {
+    kind = 'archive'
+    try {
+      const summary = await listZipEntries(file)
+      documentProps['Archive Entries'] = `${summary.entries.length} files`
+      documentProps['Encrypted'] = summary.encrypted ? 'Yes (AES-256)' : 'No'
+    } catch {
+      // ignore
+    }
+  }
+
   return {
     name: file.name,
     size: file.size,
     type: file.type || 'unknown (no MIME reported by browser)',
     modified: new Date(file.lastModified).toLocaleString(),
-    sha256,
+    sha1: toHex(h1),
+    sha256: toHex(h256),
+    sha512: toHex(h512),
+    kind,
+    canScrub,
+    documentProps: Object.keys(documentProps).length > 0 ? documentProps : undefined,
   }
+}
+
+/**
+ * Scrub author, creator, company, revision, and tracking metadata from PDF or Office (DOCX/PPTX/XLSX) files.
+ */
+export async function scrubFileMetadata(file: File): Promise<OutputFile> {
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
+  const rawBuf = await file.arrayBuffer()
+
+  if (ext === 'pdf' || file.type === 'application/pdf') {
+    const { PDFDocument } = await import('pdf-lib')
+    const doc = await PDFDocument.load(rawBuf)
+    doc.setTitle('')
+    doc.setAuthor('')
+    doc.setSubject('')
+    doc.setKeywords([])
+    doc.setCreator('')
+    doc.setProducer('')
+    const out = await doc.save({ useObjectStreams: true })
+    return {
+      name: `${stem(file.name)}-sanitized.pdf`,
+      blob: new Blob([out.buffer as ArrayBuffer], { type: 'application/pdf' }),
+    }
+  }
+
+  if (ext === 'docx' || ext === 'pptx' || ext === 'xlsx') {
+    const zip = await JSZip.loadAsync(rawBuf)
+    const cleanCore = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title></dc:title>
+  <dc:subject></dc:subject>
+  <dc:creator></dc:creator>
+  <cp:keywords></cp:keywords>
+  <dc:description></dc:description>
+  <cp:lastModifiedBy></cp:lastModifiedBy>
+  <cp:revision>1</cp:revision>
+</cp:coreProperties>`
+    if (zip.file('docProps/core.xml')) {
+      zip.file('docProps/core.xml', cleanCore)
+    }
+    const appEntry = zip.file('docProps/app.xml')
+    if (appEntry) {
+      let appXml = await appEntry.async('string')
+      appXml = appXml
+        .replace(/<Company>[\s\S]*?<\/Company>/gi, '<Company></Company>')
+        .replace(/<Manager>[\s\S]*?<\/Manager>/gi, '<Manager></Manager>')
+        .replace(/<Application>[\s\S]*?<\/Application>/gi, '<Application>DocDoctor</Application>')
+      zip.file('docProps/app.xml', appXml)
+    }
+    const mime = ext === 'docx'
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : ext === 'pptx'
+        ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+    return { name: `${stem(file.name)}-sanitized.${ext}`, blob: new Blob([blob], { type: mime }) }
+  }
+
+  throw new Error('Metadata scrubbing is supported for PDF, DOCX, PPTX, and XLSX documents.')
 }

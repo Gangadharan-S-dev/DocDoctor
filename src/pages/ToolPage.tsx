@@ -11,10 +11,10 @@ import ToolCard from '../components/ToolCard'
 import type { OutputFile } from '../processing/download'
 import { downloadBlob, downloadZip } from '../processing/download'
 import type { ImageMeta, ImgFormat } from '../processing/image'
-import type { PageOp } from '../processing/pdf'
+import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../processing/pdf'
 import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
 import type { PdfAnnotation, SignPlacement } from '../processing/advanced'
-import type { OfficeMediaSummary } from '../processing/office'
+import type { DocxReplaceRule, ExcelSheetPreview, OfficeMediaSummary } from '../processing/office'
 import { runTool } from './tool/runEngine'
 import { OCR_LANGUAGES } from '../processing/ocr-languages'
 import { isFavorite, pushRecent, toggleFavorite } from '../lib/prefs'
@@ -95,16 +95,40 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [wmPos, setWmPos] = useState<'bottom-right' | 'center' | 'tile' | 'top-left' | 'bottom-left'>('bottom-right')
   const [pageSize, setPageSize] = useState<'fit' | 'a4' | 'letter'>('fit')
   const [ranges, setRanges] = useState('1')
+  const [splitPdfMode, setSplitPdfMode] = useState<'ranges' | 'every-n' | 'all-individual'>('ranges')
+  const [splitEveryN, setSplitEveryN] = useState(2)
+  const [pdfTotalPages, setPdfTotalPages] = useState<number | null>(null)
+  const [mergeFileRanges, setMergeFileRanges] = useState<Record<number, string>>({})
+  const [mergePageCounts, setMergePageCounts] = useState<Record<number, number>>({})
+  const [mergeAddBookmarks, setMergeAddBookmarks] = useState(true)
+  const [rotateFilter, setRotateFilter] = useState<'all' | 'odd' | 'even' | 'landscape' | 'portrait' | 'custom'>('all')
+  const [rotateCustomRanges, setRotateCustomRanges] = useState('')
   const [level, setLevel] = useState<'less' | 'recommended' | 'extreme'>('recommended')
-  const [pos, setPos] = useState<'bottom-center' | 'bottom-right' | 'bottom-left'>('bottom-center')
+  const [pos, setPos] = useState<PageNumberPosition>('bottom-center')
   const [scale, setScale] = useState(2)
   const [slideSel, setSlideSel] = useState<string[]>([])
   const [slideOrder, setSlideOrder] = useState<string[]>([])
   const [sheetSel, setSheetSel] = useState<string[]>([])
   const [splitMode, setSplitMode] = useState<'heading' | 'paragraphs'>('heading')
+  const [splitPptxMode, setSplitPptxMode] = useState<'all' | 'ranges' | 'every-n'>('all')
+  const [splitPptxRanges, setSplitPptxRanges] = useState('1-2; 3')
+  const [splitPptxEveryN, setSplitPptxEveryN] = useState(2)
+  const [pptxIncludeNotes, setPptxIncludeNotes] = useState(true)
+  const [slidesImgFormat, setSlidesImgFormat] = useState<'jpg' | 'png'>('jpg')
+  const [csvMergeSingleWorkbook, setCsvMergeSingleWorkbook] = useState(true)
+  const [excelCsvDelim, setExcelCsvDelim] = useState(',')
+  const [excelCsvBom, setExcelCsvBom] = useState(true)
+  const [excelPreview, setExcelPreview] = useState<ExcelSheetPreview[]>([])
+  const [activePreviewSheet, setActivePreviewSheet] = useState(0)
   const [txtTo, setTxtTo] = useState<'txt' | 'html' | 'md'>('html')
   const [jsonMinify, setJsonMinify] = useState(false)
+  const [jsonSortKeys, setJsonSortKeys] = useState(false)
+  const [jsonFilterKey, setJsonFilterKey] = useState('')
+  const [jsonExportCsv, setJsonExportCsv] = useState(false)
   const [csvAction, setCsvAction] = useState<CsvAction>('dedupe')
+  const [csvTrimAll, setCsvTrimAll] = useState(true)
+  const [csvDedupeAll, setCsvDedupeAll] = useState(false)
+  const [csvRenameCols, setCsvRenameCols] = useState<Record<number, string>>({})
   const [editText, setEditText] = useState('')
   const [fileMeta, setFileMeta] = useState<FileMeta | null>(null)
   const [pdfText, setPdfText] = useState('')
@@ -134,6 +158,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [wordFind, setWordFind] = useState('')
   const [wordReplace, setWordReplace] = useState('')
   const [wordMatchCase, setWordMatchCase] = useState(false)
+  const [wordMatchCount, setWordMatchCount] = useState<number | null>(null)
+  const [wordReplaceRules, setWordReplaceRules] = useState<DocxReplaceRule[]>([])
   const [officeMedia, setOfficeMedia] = useState<OfficeMediaSummary | null>(null)
   const [officeMediaQuality, setOfficeMediaQuality] = useState(68)
   const [officeMediaMaxEdge, setOfficeMediaMaxEdge] = useState(1600)
@@ -144,10 +170,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pdfNumSize, setPdfNumSize] = useState(10)
   const [pdfNumColor, setPdfNumColor] = useState('#1e293b')
   const [pdfNumSkipCover, setPdfNumSkipCover] = useState(false)
+  const [pdfNumFont, setPdfNumFont] = useState<'Helvetica' | 'TimesRoman' | 'Courier'>('Helvetica')
+  const [pdfNumStyle, setPdfNumStyle] = useState<'arabic' | 'roman-lower' | 'roman-upper'>('arabic')
+  const [pdfNumRange, setPdfNumRange] = useState('')
+  const [pdfNumMargin, setPdfNumMargin] = useState(24)
 
+  const [pdfWmType, setPdfWmType] = useState<'text' | 'image'>('text')
+  const [pdfWmPos, setPdfWmPos] = useState<PdfWatermarkPosition>('center')
+  const [pdfWmLogoUrl, setPdfWmLogoUrl] = useState<string | null>(null)
+  const [pdfWmLogoScale, setPdfWmLogoScale] = useState(0.28)
   const [pdfWmAngle, setPdfWmAngle] = useState(-30)
   const [pdfWmColor, setPdfWmColor] = useState('#73738c')
   const [pdfWmSize, setPdfWmSize] = useState(48)
+  const [comparePixelDiff, setComparePixelDiff] = useState(true)
 
   const [icoSizes, setIcoSizes] = useState<number[]>([16, 24, 32, 48, 64])
   const [jsonIndent, setJsonIndent] = useState<number | 'tab'>(2)
@@ -171,9 +206,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   // Image upgrades state
   const [imgMaxEdge, setImgMaxEdge] = useState<number>(0)
   const [targetSizeKB, setTargetSizeKB] = useState<number>(0)
+  const [estSizeBytes, setEstSizeBytes] = useState<number | null>(null)
   const [resizeMode, setResizeMode] = useState<'stretch' | 'contain' | 'cover'>('stretch')
   const [smoothing, setSmoothing] = useState<'high' | 'pixelated'>('high')
   const [cropCircular, setCropCircular] = useState(false)
+  const [cropCornerRadius, setCropCornerRadius] = useState(0)
   const [imgBgColor, setImgBgColor] = useState('#ffffff')
   const [rotBgColor, setRotBgColor] = useState('#ffffff')
   const [rotFineAngle, setRotFineAngle] = useState(0)
@@ -189,6 +226,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [imgFormat, setImgFormat] = useState<'jpg' | 'png'>('jpg')
   const [pwd, setPwd] = useState('')
   const [pwd2, setPwd2] = useState('')
+  const [ownerPwd, setOwnerPwd] = useState('')
+  const [pdfAllowPrinting, setPdfAllowPrinting] = useState(true)
+  const [pdfAllowCopying, setPdfAllowCopying] = useState(true)
+  const [pdfAllowModifying, setPdfAllowModifying] = useState(false)
+  const [pdfAllowAnnotating, setPdfAllowAnnotating] = useState(true)
   const [blockSel, setBlockSel] = useState<number[]>([])
   const [ocrLang, setOcrLang] = useState('eng')
   const [ocrFormat, setOcrFormat] = useState<'txt' | 'pdf' | 'docx' | 'both'>('txt')
@@ -213,9 +255,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const handleFilesChange = (next: PickedFile[]) => {
     setFiles(next)
     setResults([]); setError(''); setMeta(null); setDims(null); setFileMeta(null); setPreviewText('')
-    setCustomNames({}); setPdfPreviewUrl(null); setCopiedIdx(null); setWmLogoUrl(null)
-    setJsonValidation(null); setCsvPreviewRows([]); setCsvKeepCols([])
+    setCustomNames({}); setPdfPreviewUrl(null); setCopiedIdx(null); setWmLogoUrl(null); setPdfWmLogoUrl(null)
+    setJsonValidation(null); setCsvPreviewRows([]); setCsvKeepCols([]); setCsvRenameCols({})
     setPdfAnnotations([]); setSignPlacements([]); setOfficeMedia(null); setZipSummary(null); setZipFilterNames([])
+    setExcelPreview([]); setActivePreviewSheet(0); setSheetSel([]); setEstSizeBytes(null)
+    setPdfTotalPages(null); setMergeFileRanges({}); setMergePageCounts({}); setWordReplaceRules([]); setWordMatchCount(null)
   }
 
   // Load image dimensions / metadata when the first file changes.
@@ -243,6 +287,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       }).catch(() => {})
       return () => { alive = false }
     }
+    if (tool.id === 'excel-to-csv' || tool.id === 'excel-to-html' || tool.id === 'excel-to-pdf' || tool.id === 'xlsx-to-pdf') {
+      import('../processing/office').then((m) => m.previewExcel(first)).then((sheets) => {
+        if (alive) {
+          setExcelPreview(sheets)
+          setSheetSel(sheets.map((s) => s.name))
+        }
+      }).catch(() => {})
+      return () => { alive = false }
+    }
+    if (tool.id === 'split-pdf' || tool.id === 'pdf-page-numbers' || tool.id === 'rotate-pdf') {
+      first.arrayBuffer().then((buf) => import('../processing/pdf').then((m) => m.pdfPageCount(buf))).then((n) => {
+        if (alive) {
+          setPdfTotalPages(n)
+          if (tool.id === 'split-pdf' && n > 1) {
+            setRanges(`1-${Math.ceil(n / 2)}; ${Math.ceil(n / 2) + 1}-${n}`)
+          }
+        }
+      }).catch(() => {})
+      return () => { alive = false }
+    }
     if (!first.type.startsWith('image/')) return
     import('../processing/image').then((m) => m.imageMetadata(first)).then((m) => {
       if (!alive) return
@@ -251,18 +315,75 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     return () => { alive = false }
   }, [first]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // JSON validation and CSV preview when first file changes
+  // Inspect page counts for all uploaded PDFs in merge-pdf
+  useEffect(() => {
+    if (tool.id !== 'merge-pdf' || !files.length) return
+    let alive = true
+    Promise.all(
+      files.map(async (f, idx) => {
+        try {
+          const { pdfPageCount } = await import('../processing/pdf')
+          const n = await pdfPageCount(await f.file.arrayBuffer())
+          return [idx, n] as const
+        } catch {
+          return [idx, 0] as const
+        }
+      })
+    ).then((entries) => {
+      if (!alive) return
+      const map: Record<number, number> = {}
+      for (const [idx, count] of entries) {
+        if (count > 0) map[idx] = count
+      }
+      setMergePageCounts(map)
+    })
+    return () => { alive = false }
+  }, [files, tool.id])
+
+  // Live match counter for DOCX Find & Replace
+  useEffect(() => {
+    if (tool.id !== 'edit-word' || wordEditMode !== 'replace' || !first || !wordFind.trim()) return
+    let alive = true
+    import('../processing/office')
+      .then((m) => m.countDocxMatches(first, wordFind, wordMatchCase))
+      .then((count) => { if (alive) setWordMatchCount(count) })
+      .catch(() => { if (alive) setWordMatchCount(null) })
+    return () => { alive = false }
+  }, [first, tool.id, wordEditMode, wordFind, wordMatchCase])
+
+  // Live compressed image size estimation when quality/format/maxEdge changes
+  useEffect(() => {
+    if (tool.id !== 'compress-image' || !first || !first.type.startsWith('image/')) return
+    let alive = true
+    const timer = setTimeout(() => {
+      import('../processing/image')
+        .then((m) => m.estimateCompressedSize(first, {
+          quality: quality / 100,
+          format,
+          maxEdge: imgMaxEdge || undefined,
+          targetSizeKB: targetSizeKB || undefined,
+        }))
+        .then((sz) => { if (alive) setEstSizeBytes(sz) })
+        .catch(() => {})
+    }, 140)
+    return () => { alive = false; clearTimeout(timer) }
+  }, [first, tool.id, quality, format, imgMaxEdge, targetSizeKB])
+
+  // JSON validation, XML loading, and CSV preview when first file changes
   useEffect(() => {
     if (!first) return
     let alive = true
-    if (tool.id === 'json-formatter' || tool.id === 'json-to-xml') {
+    if (tool.id === 'json-formatter' || tool.id === 'json-to-xml' || tool.id === 'xml-formatter') {
       first.text().then((txt) => {
         if (!alive) return
-        try {
-          JSON.parse(txt)
-          setJsonValidation({ ok: true, msg: 'Valid JSON format' })
-        } catch (e) {
-          setJsonValidation({ ok: false, msg: e instanceof Error ? e.message : 'Invalid JSON' })
+        setEditText(txt)
+        if (tool.id !== 'xml-formatter') {
+          try {
+            JSON.parse(txt)
+            setJsonValidation({ ok: true, msg: 'Valid JSON format' })
+          } catch (e) {
+            setJsonValidation({ ok: false, msg: e instanceof Error ? e.message : 'Invalid JSON' })
+          }
         }
       }).catch(() => {})
     }
@@ -353,10 +474,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         signal: controller.signal,
         onProgress: (done, total) => setProgress({ done, total }),
         settings: {
-          quality, format, width, height, crop, angle: rotFineAngle || angle, flipH, flipV, wmText, wmOpacity,
+          quality, format, width, height, crop, cropCornerRadius, angle: rotFineAngle || angle, flipH, flipV, wmText, wmOpacity,
           wmFontSize: Math.max(24, Math.round((dims?.w ?? 800) / 18)),
-          wmPos, wmLogoUrl, pageSize, ranges, level, pos, scale, slideSel, slideOrder, sheetSel, splitMode,
-          txtTo, jsonMinify, csvAction, editText, pdfText, pdfPage, pdfX, pdfY, pdfSize,
+          wmPos, wmLogoUrl, pageSize, ranges,
+          splitPdfMode, splitEveryN,
+          mergeFileRanges: Object.keys(mergeFileRanges).length ? mergeFileRanges : undefined,
+          mergeAddBookmarks,
+          rotateFilter, rotateCustomRanges: rotateCustomRanges.trim() || undefined,
+          level, pos, scale, slideSel, slideOrder, sheetSel, splitMode,
+          splitPptxMode, splitPptxRanges, splitPptxEveryN,
+          pptxIncludeNotes, slidesImgFormat,
+          csvMergeSingleWorkbook, excelCsvDelim, excelCsvBom,
+          txtTo, jsonMinify, jsonSortKeys, jsonFilterKey: jsonFilterKey.trim() || undefined, jsonExportCsv,
+          csvAction, editText, pdfText, pdfPage, pdfX, pdfY, pdfSize,
           pdfColor, pdfEditMode, pdfFont, pdfRedactW, pdfRedactH,
           pdfAnnotations: pdfAnnotations.length ? pdfAnnotations : undefined,
           pdfDestructiveRedact,
@@ -365,14 +495,25 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           signDateStamp: signDateStamp.trim() || undefined,
           signPlacements: signPlacements.length ? signPlacements : undefined,
           pptxMode,
-          pwd, pwd2, blockSel, gridValue, ocrLang, ocrFormat, excelOrientation, excelGridlines,
+          pwd, pwd2,
+          ownerPwd: ownerPwd.trim() || undefined,
+          pdfAllowPrinting, pdfAllowCopying, pdfAllowModifying, pdfAllowAnnotating,
+          blockSel, gridValue, ocrLang, ocrFormat, excelOrientation, excelGridlines,
           wordEditMode, wordFind, wordReplace, wordMatchCase,
+          wordReplaceRules: wordReplaceRules.length ? wordReplaceRules : undefined,
           officeMediaQuality, officeMediaMaxEdge,
           pdfNumFormat, pdfNumStart, pdfNumSize, pdfNumColor, pdfNumSkipCover,
-          pdfWmAngle, pdfWmColor, pdfWmSize, icoSizes, jsonIndent, csvDelim,
+          pdfNumFont, pdfNumStyle, pdfNumRange: pdfNumRange.trim() || undefined, pdfNumMargin,
+          pdfWmAngle, pdfWmColor, pdfWmSize, pdfWmPos,
+          pdfWmLogoUrl: pdfWmType === 'image' ? pdfWmLogoUrl : null,
+          pdfWmLogoScale,
+          comparePixelDiff,
+          icoSizes, jsonIndent, csvDelim,
           csvOutDelim: csvOutDelim || undefined,
           csvSortCol, csvFilterQuery, csvFindText, csvReplaceText,
           csvKeepCols: csvPreviewRows[0]?.length && csvKeepCols.length < csvPreviewRows[0].length ? csvKeepCols : undefined,
+          csvTrimAll, csvDedupeAll,
+          csvRenameCols: Object.keys(csvRenameCols).length ? csvRenameCols : undefined,
           zipLevel, zipPassword: zipPassword || undefined, zipArchiveName: zipArchiveName || undefined,
           zipFilterNames: zipSummary && zipFilterNames.length > 0 && zipFilterNames.length < zipSummary.entries.length ? zipFilterNames : undefined,
           maxEdge: imgMaxEdge || undefined,
@@ -488,6 +629,18 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       downloadBlob(out.blob, out.name)
     } catch {
       setError('Failed to strip metadata.')
+    }
+  }
+
+  const handleScrubFileMetadata = async () => {
+    if (!first) return
+    try {
+      const { scrubFileMetadata } = await import('../processing/text')
+      const out = await scrubFileMetadata(first)
+      setResults([out])
+      downloadBlob(out.blob, out.name)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to scrub document metadata.')
     }
   }
 
@@ -702,12 +855,83 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         )}
 
         {tool.id === 'file-metadata' && fileMeta && (
-          <dl className="mt-6 grid gap-3 sm:grid-cols-2">
-            {[['File name', fileMeta.name], ['Size', formatSize(fileMeta.size)], ['Type', fileMeta.type], ['Last modified', fileMeta.modified], ['SHA-256', fileMeta.sha256]].map(([k, v]) => (
-              <div key={k} className={`rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70 ${k === 'SHA-256' ? 'sm:col-span-2' : ''}`}><dt className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{k}</dt><dd className="mt-0.5 break-all text-sm font-bold text-ink-950">{v}</dd></div>
-            ))}
-            <p className="text-xs text-slate-500 sm:col-span-2">Computed locally in your browser — the file is never uploaded. Hash lets you verify file integrity anywhere.</p>
-          </dl>
+          <div className="mt-6 space-y-5 border-t border-slate-100 pt-5">
+            {fileMeta.canScrub && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-teal-200 bg-teal-50/70 p-4">
+                <div>
+                  <p className="text-sm font-bold text-ink-950">Document Privacy Sanitizer Available</p>
+                  <p className="text-xs font-semibold text-slate-600">
+                    Scrub embedded Author, Creator, Last Modified By, Company, Revision, and tracking properties from this {fileMeta.kind === 'pdf' ? 'PDF' : 'Office'} document.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleScrubFileMetadata}
+                  className="btn-accent !py-2 !px-3.5 text-xs flex items-center gap-1.5 shrink-0"
+                >
+                  <ShieldCheck className="h-4 w-4" /> Download Sanitized Copy
+                </button>
+              </div>
+            )}
+
+            <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                ['File name', fileMeta.name],
+                ['Size', formatSize(fileMeta.size)],
+                ['MIME Type', fileMeta.type],
+                ['Last modified', fileMeta.modified],
+              ].map(([k, v]) => (
+                <div key={k} className="rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                  <dt className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{k}</dt>
+                  <dd className="mt-0.5 truncate text-sm font-bold text-ink-950" title={v}>{v}</dd>
+                </div>
+              ))}
+            </dl>
+
+            {fileMeta.documentProps && Object.keys(fileMeta.documentProps).length > 0 && (
+              <div>
+                <span className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-slate-400">
+                  Internal Document Properties ({fileMeta.kind?.toUpperCase()})
+                </span>
+                <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {Object.entries(fileMeta.documentProps).map(([k, v]) => (
+                    <div key={k} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+                      <dt className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{k}</dt>
+                      <dd className="mt-0.5 truncate text-sm font-bold text-ink-950" title={v}>{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+
+            <div>
+              <span className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-slate-400">
+                Cryptographic Checksums (WebCrypto Integrity Hashes)
+              </span>
+              <dl className="space-y-2">
+                {[
+                  ['SHA-1', fileMeta.sha1],
+                  ['SHA-256', fileMeta.sha256],
+                  ['SHA-512', fileMeta.sha512],
+                ].map(([alg, hash]) => (
+                  <div key={alg} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-4 py-2.5 ring-1 ring-slate-200/70">
+                    <div className="min-w-0 flex-1">
+                      <dt className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">{alg}</dt>
+                      <dd className="mt-0.5 break-all font-mono text-xs font-bold text-ink-950">{hash}</dd>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(hash)}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <p className="text-xs text-slate-500">Computed locally in your browser — the file is never uploaded. Cryptographic hashes let you verify file integrity anywhere.</p>
+          </div>
         )}
 
         {tool.id === 'edit-word' && first && (
@@ -756,14 +980,58 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Find text in DOCX</span>
+                    <span className="mb-1.5 flex items-center justify-between text-sm font-bold text-ink-950">
+                      <span>Find text in DOCX</span>
+                      {wordFind.trim() && wordMatchCount !== null && (
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-extrabold ${wordMatchCount > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                          {wordMatchCount} match{wordMatchCount === 1 ? '' : 'es'} found
+                        </span>
+                      )}
+                    </span>
                     <input value={wordFind} onChange={(e) => setWordFind(e.target.value)} className="input" placeholder="e.g. {{CLIENT_NAME}} or 2025" />
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-sm font-bold text-ink-950">Replace with</span>
-                    <input value={wordReplace} onChange={(e) => setWordReplace(e.target.value)} className="input" placeholder="e.g. Acme Corp or 2026" />
+                    <div className="flex gap-2">
+                      <input value={wordReplace} onChange={(e) => setWordReplace(e.target.value)} className="input" placeholder="e.g. Acme Corp or 2026" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!wordFind.trim()) return
+                          setWordReplaceRules((prev) => [...prev, { find: wordFind, replace: wordReplace }])
+                          setWordFind('')
+                          setWordReplace('')
+                        }}
+                        className="shrink-0 rounded-xl border border-accent bg-accent/10 px-3 py-2 text-xs font-bold text-accent hover:bg-accent hover:text-white transition"
+                        title="Queue multiple Find & Replace rules to run in one pass"
+                      >
+                        + Add Rule
+                      </button>
+                    </div>
                   </label>
                 </div>
+
+                {wordReplaceRules.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-ink-950">
+                      <span>Queued Find &amp; Replace Rules ({wordReplaceRules.length})</span>
+                      <button type="button" onClick={() => setWordReplaceRules([])} className="text-red-600 hover:underline">Clear Rules</button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {wordReplaceRules.map((r, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                          <code className="text-red-600">{r.find}</code>
+                          <span>→</span>
+                          <code className="text-emerald-700">{r.replace || '(empty)'}</code>
+                          <button type="button" onClick={() => setWordReplaceRules((prev) => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-600">
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
                   <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
                   Case-sensitive match
@@ -795,10 +1063,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       <div className="text-slate-500 mt-0.5">
                         Original: <strong>{formatSize(first?.size ?? 0)}</strong> · {dims.w} × {dims.h} px {aspectRatio && `· ${aspectRatio.mp} MP (${aspectRatio.common})`}
                       </div>
-                      <div className="mt-1 flex items-center gap-2">
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">
                           <ShieldCheck className="mr-1 h-3 w-3" /> EXIF metadata auto-stripped for web privacy
                         </span>
+                        {estSizeBytes !== null && first && (
+                          <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-extrabold text-accent ring-1 ring-blue-200">
+                            Live Estimate: ~{formatSize(estSizeBytes)} ({estSizeBytes < first.size ? `-${Math.round((1 - estSizeBytes / first.size) * 100)}% smaller` : 'already optimal'})
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -935,6 +1208,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     onChange={setCrop}
                     circular={cropCircular}
                     onCircularChange={setCropCircular}
+                    cornerRadius={cropCornerRadius}
+                    onCornerRadiusChange={setCropCornerRadius}
                     imageDims={dims}
                   />
                 </Suspense>
@@ -1059,7 +1334,79 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
-            {tool.id === 'rotate-pdf' && sel('Rotation', String(angle), (v: string) => setAngle(+v), [['90', '90° clockwise'], ['180', '180°'], ['270', '270° clockwise']])}
+            {tool.id === 'merge-pdf' && files.length > 0 && (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                      Per-Document Page Range Selection (Optional — Leave blank for all pages)
+                    </span>
+                    <label className="flex items-center gap-2 text-xs font-bold text-ink-950">
+                      <input
+                        type="checkbox"
+                        checked={mergeAddBookmarks}
+                        onChange={(e) => setMergeAddBookmarks(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Generate PDF Outline / Bookmarks from filenames
+                    </label>
+                  </div>
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    {files.map((f, idx) => (
+                      <div key={f.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-bold text-ink-950" title={f.file.name}>
+                            {idx + 1}. {f.file.name}
+                          </div>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {mergePageCounts[idx] ? `${mergePageCounts[idx]} page${mergePageCounts[idx] === 1 ? '' : 's'}` : formatSize(f.file.size)}
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={mergeFileRanges[idx] ?? ''}
+                          onChange={(e) => setMergeFileRanges((prev) => ({ ...prev, [idx]: e.target.value }))}
+                          placeholder={mergePageCounts[idx] ? `All (1-${mergePageCounts[idx]})` : 'All pages'}
+                          className="input !py-1 !px-2.5 w-32 text-xs font-mono"
+                          title="Optional page range for this PDF, e.g. 1-3, 5"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {tool.id === 'rotate-pdf' && (
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Rotation Angle', String(angle), (v: string) => setAngle(+v), [
+                    ['90', '90° Clockwise'],
+                    ['180', '180° (Upside Down)'],
+                    ['270', '270° Clockwise (90° Counter-Clockwise)'],
+                  ])}
+                  {sel('Pages to Rotate', rotateFilter, setRotateFilter as never, [
+                    ['all', `All Pages${pdfTotalPages ? ` (${pdfTotalPages} pages)` : ''}`],
+                    ['odd', 'Odd Pages Only (1, 3, 5…)'],
+                    ['even', 'Even Pages Only (2, 4, 6…)'],
+                    ['landscape', 'Landscape Pages Only (Width > Height)'],
+                    ['portrait', 'Portrait Pages Only (Height ≥ Width)'],
+                    ['custom', 'Specific Page Range (e.g. 1-3, 5)'],
+                  ])}
+                </div>
+                {rotateFilter === 'custom' && (
+                  <label className="block max-w-md">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Page Range to Rotate</span>
+                    <input
+                      value={rotateCustomRanges}
+                      onChange={(e) => setRotateCustomRanges(e.target.value)}
+                      placeholder="e.g. 1-3, 5"
+                      className="input font-mono"
+                    />
+                  </label>
+                )}
+              </div>
+            )}
 
             {tool.id === 'image-watermark' && (
               <div className="space-y-4">
@@ -1184,24 +1531,90 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {tool.id === 'pdf-watermark' && (
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block"><span className="mb-1.5 block text-sm font-bold">Watermark text</span><input value={wmText} onChange={(e) => setWmText(e.target.value)} className="input" maxLength={60} /></label>
-                  {slider('Opacity', Math.round(wmOpacity * 100), (v) => setWmOpacity(v / 100), 5, 90, '%')}
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                  <button
+                    type="button"
+                    onClick={() => setPdfWmType('text')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfWmType === 'text' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                  >
+                    Text Watermark
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPdfWmType('image')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfWmType === 'image' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                  >
+                    Logo / Image Watermark
+                  </button>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  {sel('Angle', String(pdfWmAngle), (v: string) => setPdfWmAngle(+v), [
-                    ['-30', 'Diagonal (-30°)'],
-                    ['-45', 'Diagonal (-45°)'],
-                    ['0', 'Horizontal (0°)'],
-                  ])}
-                  {slider('Font Size', pdfWmSize, setPdfWmSize, 20, 72, ' pt')}
-                  {sel('Color Theme', pdfWmColor, setPdfWmColor, [
-                    ['#73738c', 'Subtle Gray'],
-                    ['#dc2626', 'Confidential Red'],
-                    ['#002d62', 'Corporate Navy'],
-                    ['#1e293b', 'Dark Slate'],
-                  ])}
-                </div>
+
+                {pdfWmType === 'text' ? (
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <label className="block">
+                        <span className="mb-1.5 block text-sm font-bold">Watermark text</span>
+                        <input value={wmText} onChange={(e) => setWmText(e.target.value)} className="input" maxLength={60} />
+                      </label>
+                      {sel('Placement & Tiling', pdfWmPos, setPdfWmPos as never, [
+                        ['center', 'Centered Stamp'],
+                        ['tile', 'Tiled Diagonally Across Page'],
+                        ['top-right', 'Top Right Corner'],
+                        ['top-left', 'Top Left Corner'],
+                        ['bottom-right', 'Bottom Right Corner'],
+                        ['bottom-left', 'Bottom Left Corner'],
+                      ])}
+                      {slider('Opacity', Math.round(wmOpacity * 100), (v) => setWmOpacity(v / 100), 5, 90, '%')}
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      {sel('Angle', String(pdfWmAngle), (v: string) => setPdfWmAngle(+v), [
+                        ['-30', 'Diagonal (-30°)'],
+                        ['-45', 'Diagonal (-45°)'],
+                        ['0', 'Horizontal (0°)'],
+                      ])}
+                      {slider('Font Size', pdfWmSize, setPdfWmSize, 16, 72, ' pt')}
+                      {sel('Color Theme', pdfWmColor, setPdfWmColor, [
+                        ['#73738c', 'Subtle Gray'],
+                        ['#dc2626', 'Confidential Red'],
+                        ['#002d62', 'Corporate Navy'],
+                        ['#1e293b', 'Dark Slate'],
+                      ])}
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="block sm:col-span-2">
+                      <span className="mb-1.5 block text-sm font-bold">Upload Watermark Logo (PNG / JPG)</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0]
+                          if (f) {
+                            const reader = new FileReader()
+                            reader.onload = () => setPdfWmLogoUrl(reader.result as string)
+                            reader.readAsDataURL(f)
+                          }
+                        }}
+                        className="input !py-2 text-xs"
+                      />
+                    </label>
+                    {sel('Placement & Tiling', pdfWmPos, setPdfWmPos as never, [
+                      ['center', 'Centered'],
+                      ['tile', 'Tiled Across Page'],
+                      ['top-right', 'Top Right'],
+                      ['top-left', 'Top Left'],
+                      ['bottom-right', 'Bottom Right'],
+                      ['bottom-left', 'Bottom Left'],
+                    ])}
+                    {slider('Logo Scale', Math.round(pdfWmLogoScale * 100), (v) => setPdfWmLogoScale(v / 100), 10, 65, '%')}
+                    {slider('Opacity', Math.round(wmOpacity * 100), (v) => setWmOpacity(v / 100), 5, 100, '%')}
+                    {sel('Rotation Angle', String(pdfWmAngle), (v: string) => setPdfWmAngle(+v), [
+                      ['0', 'Horizontal (0°)'],
+                      ['-30', 'Diagonal (-30°)'],
+                      ['-45', 'Diagonal (-45°)'],
+                    ])}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1320,19 +1733,114 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             )}
 
             {tool.id === 'split-pdf' && (
-              <div className="space-y-3">
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-bold">Pages to extract</span>
-                  <input value={ranges} onChange={(e) => setRanges(e.target.value)} className="input font-mono" placeholder="e.g. 1-3, 5 — separate outputs with ; e.g. 1-2; 3-4" />
-                  <span className="mt-1 block text-xs font-medium text-slate-500">Use ranges like 1-3, 5. Separate groups with a semicolon to create multiple files.</span>
-                </label>
-                <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
-                  <span className="text-slate-400 mr-1">Presets:</span>
-                  <button type="button" onClick={() => setRanges('1; 2; 3; 4; 5')} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm">Every page</button>
-                  <button type="button" onClick={() => setRanges('1-2; 3-4; 5-6')} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm">Every 2 pages</button>
-                  <button type="button" onClick={() => setRanges('1, 3, 5, 7, 9')} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm">Odd pages</button>
-                  <button type="button" onClick={() => setRanges('2, 4, 6, 8, 10')} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm">Even pages</button>
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      ['ranges', 'Custom Page Ranges'],
+                      ['every-n', 'Split Every N Pages'],
+                      ['all-individual', 'Every Page into Separate PDF'],
+                    ].map(([m, lbl]) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setSplitPdfMode(m as never)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${splitPdfMode === m ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                  {pdfTotalPages !== null && (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-extrabold text-ink-950">
+                      Document has {pdfTotalPages} page{pdfTotalPages === 1 ? '' : 's'}
+                    </span>
+                  )}
                 </div>
+
+                {splitPdfMode === 'ranges' && (
+                  <div className="space-y-3">
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold">Pages to extract</span>
+                      <input value={ranges} onChange={(e) => setRanges(e.target.value)} className="input font-mono" placeholder="e.g. 1-3, 5 — separate outputs with ; e.g. 1-2; 3-4" />
+                      <span className="mt-1 block text-xs font-medium text-slate-500">Use ranges like 1-3, 5. Separate groups with a semicolon to create multiple files.</span>
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                      <span className="text-slate-400 mr-1">Presets:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = pdfTotalPages || 5
+                          setRanges(Array.from({ length: n }, (_, i) => i + 1).join('; '))
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                      >
+                        Every page
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = pdfTotalPages || 6
+                          const groups: string[] = []
+                          for (let i = 1; i <= n; i += 2) groups.push(i + 1 <= n ? `${i}-${i + 1}` : `${i}`)
+                          setRanges(groups.join('; '))
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                      >
+                        Every 2 pages
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = pdfTotalPages || 10
+                          const odds = Array.from({ length: n }, (_, i) => i + 1).filter((p) => p % 2 === 1)
+                          setRanges(odds.join(', '))
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                      >
+                        Odd pages
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = pdfTotalPages || 10
+                          const evens = Array.from({ length: n }, (_, i) => i + 1).filter((p) => p % 2 === 0)
+                          if (evens.length) setRanges(evens.join(', '))
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                      >
+                        Even pages
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {splitPdfMode === 'every-n' && (
+                  <div className="max-w-sm space-y-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold">Pages per output PDF</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={pdfTotalPages || 100}
+                        value={splitEveryN}
+                        onChange={(e) => setSplitEveryN(Math.max(1, +e.target.value || 1))}
+                        className="input"
+                      />
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      {pdfTotalPages
+                        ? `Splits ${pdfTotalPages} pages into ${Math.ceil(pdfTotalPages / Math.max(1, splitEveryN))} separate PDF file(s).`
+                        : 'Splits the document into equal chunks of N pages.'}
+                    </p>
+                  </div>
+                )}
+
+                {splitPdfMode === 'all-individual' && (
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-600">
+                    Every page in your PDF{pdfTotalPages ? ` (${pdfTotalPages} pages)` : ''} will be exported as its own individual PDF file.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1358,17 +1866,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {tool.id === 'pdf-page-numbers' && (
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-3">
                   {sel('Numbering Format', pdfNumFormat, setPdfNumFormat, [
                     ['Page {n} of {total}', 'Page {n} of {total}'],
                     ['{n} / {total}', '{n} / {total}'],
                     ['Page {n}', 'Page {n}'],
+                    ['- {n} -', '- {n} -'],
                     ['{n}', '{n}'],
                   ])}
-                  {sel('Position', pos, setPos, [
-                    ['bottom-center', 'Bottom Center'],
-                    ['bottom-right', 'Bottom Right'],
-                    ['bottom-left', 'Bottom Left'],
+                  {sel('Numbering Style', pdfNumStyle, setPdfNumStyle as never, [
+                    ['arabic', '1, 2, 3 (Arabic Numerals)'],
+                    ['roman-lower', 'i, ii, iii (Roman Lowercase)'],
+                    ['roman-upper', 'I, II, III (Roman Uppercase)'],
+                  ])}
+                  {sel('Position', pos, setPos as never, [
+                    ['bottom-center', 'Bottom Center (Footer)'],
+                    ['bottom-right', 'Bottom Right (Footer)'],
+                    ['bottom-left', 'Bottom Left (Footer)'],
+                    ['top-center', 'Top Center (Header)'],
+                    ['top-right', 'Top Right (Header)'],
+                    ['top-left', 'Top Left (Header)'],
                   ])}
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1376,12 +1893,30 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     <span className="mb-1.5 block text-sm font-bold">Start Numbering At</span>
                     <input type="number" min={1} value={pdfNumStart} onChange={(e) => setPdfNumStart(Math.max(1, +e.target.value || 1))} className="input" />
                   </label>
+                  {sel('Font Family', pdfNumFont, setPdfNumFont as never, [
+                    ['Helvetica', 'Helvetica (Sans-Serif)'],
+                    ['TimesRoman', 'Times Roman (Serif)'],
+                    ['Courier', 'Courier (Monospace)'],
+                  ])}
                   {slider('Font Size', pdfNumSize, setPdfNumSize, 8, 18, ' pt')}
+                  {slider('Edge Margin', pdfNumMargin, setPdfNumMargin, 14, 64, ' pt')}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
                   {sel('Font Color', pdfNumColor, setPdfNumColor, [
                     ['#1e293b', 'Dark Slate'],
                     ['#64748b', 'Muted Gray'],
                     ['#000000', 'Solid Black'],
+                    ['#1d4ed8', 'Accent Blue'],
                   ])}
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold">Page Range (Optional)</span>
+                    <input
+                      value={pdfNumRange}
+                      onChange={(e) => setPdfNumRange(e.target.value)}
+                      placeholder={pdfTotalPages ? `All (1-${pdfTotalPages})` : 'e.g. 2-10'}
+                      className="input font-mono"
+                    />
+                  </label>
                   <label className="flex items-center gap-2 pt-6 text-sm font-bold">
                     <input type="checkbox" checked={pdfNumSkipCover} onChange={(e) => setPdfNumSkipCover(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
                     Skip Cover Page (No number on page 1)
@@ -1394,24 +1929,83 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {tool.id === 'split-word' && <div>{sel('Split by', splitMode, setSplitMode, [['heading', 'Heading 1 sections'], ['paragraphs', 'Every 15 paragraphs']])}<p className="mt-2 text-xs text-slate-500">Word pagination depends on fonts and rendering, so splitting uses document structure — headings or paragraph blocks — never guessed page breaks.</p></div>}
             {(tool.id === 'txt-converter' || tool.id === 'markdown-converter') && sel('Convert to', txtTo, setTxtTo, [['html', 'HTML'], ['txt', 'Plain text (TXT)'], ['md', 'Markdown']])}
 
-            {tool.id === 'json-formatter' && (
+            {(tool.id === 'json-formatter' || tool.id === 'json-to-xml' || tool.id === 'xml-formatter') && (
               <div className="space-y-4">
-                {jsonValidation && (
+                {tool.id !== 'xml-formatter' && jsonValidation && (
                   <div className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold ${jsonValidation.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
                     {jsonValidation.ok ? <Check className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-red-600" />}
                     {jsonValidation.msg}
                   </div>
                 )}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {sel('Formatting Style', jsonMinify ? 'min' : String(jsonIndent), (v: string) => {
-                    if (v === 'min') setJsonMinify(true)
-                    else { setJsonMinify(false); setJsonIndent(v === 'tab' ? 'tab' : +v) }
-                  }, [
-                    ['2', '2 Spaces (Standard Pretty-print)'],
-                    ['4', '4 Spaces (Expanded)'],
-                    ['tab', 'Tab Indentation'],
-                    ['min', 'Minify (Remove all whitespace)'],
-                  ])}
+
+                {tool.id === 'json-formatter' && (
+                  <div className="space-y-3">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {sel('Formatting Style', jsonMinify ? 'min' : String(jsonIndent), (v: string) => {
+                        if (v === 'min') setJsonMinify(true)
+                        else { setJsonMinify(false); setJsonIndent(v === 'tab' ? 'tab' : +v) }
+                      }, [
+                        ['2', '2 Spaces (Standard Pretty-print)'],
+                        ['4', '4 Spaces (Expanded)'],
+                        ['tab', 'Tab Indentation'],
+                        ['min', 'Minify (Remove all whitespace)'],
+                      ])}
+                      <label className="block">
+                        <span className="mb-1.5 block text-sm font-bold text-ink-950">Filter Keys by Name (Optional)</span>
+                        <input
+                          value={jsonFilterKey}
+                          onChange={(e) => setJsonFilterKey(e.target.value)}
+                          placeholder="e.g. id, email, price"
+                          className="input font-mono text-xs"
+                        />
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-5 pt-1 text-xs font-bold text-ink-950">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={jsonSortKeys}
+                          onChange={(e) => setJsonSortKeys(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        Sort JSON keys alphabetically (A → Z)
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={jsonExportCsv}
+                          onChange={(e) => setJsonExportCsv(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        Convert JSON array/object to CSV spreadsheet (.csv)
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-slate-600">
+                    <span>Interactive {tool.id === 'xml-formatter' ? 'XML' : 'JSON'} Source Editor (Edit or paste before processing)</span>
+                    <span>{editText.length} chars</span>
+                  </div>
+                  <textarea
+                    value={editText}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setEditText(val)
+                      if (tool.id !== 'xml-formatter') {
+                        try {
+                          JSON.parse(val)
+                          setJsonValidation({ ok: true, msg: 'Valid JSON format' })
+                        } catch (err) {
+                          setJsonValidation({ ok: false, msg: err instanceof Error ? err.message : 'Invalid JSON' })
+                        }
+                      }
+                    }}
+                    rows={8}
+                    className="input font-mono !text-xs leading-relaxed"
+                    placeholder={tool.id === 'xml-formatter' ? '<root><item>Value</item></root>' : '{\n  "key": "value"\n}'}
+                  />
                 </div>
               </div>
             )}
@@ -1473,11 +2067,33 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </div>
                 )}
 
+                <div className="flex flex-wrap items-center gap-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-bold text-ink-950">
+                  <span className="text-slate-500 uppercase tracking-wide text-[11px]">Multi-Step Cleanup Pipeline:</span>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={csvTrimAll}
+                      onChange={(e) => setCsvTrimAll(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Also trim whitespace in all cells
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={csvDedupeAll}
+                      onChange={(e) => setCsvDedupeAll(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Also remove duplicate rows
+                  </label>
+                </div>
+
                 {csvPreviewRows.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
-                        Data Table Preview (First {csvPreviewRows.length} Rows) · Uncheck columns to drop them
+                        Data Table Preview (First {csvPreviewRows.length} Rows) · Uncheck columns to drop or click header to rename
                       </span>
                       {csvPreviewRows[0]?.length && csvKeepCols.length < csvPreviewRows[0].length && (
                         <button
@@ -1489,15 +2105,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         </button>
                       )}
                     </div>
-                    <div className="max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <div className="max-h-60 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                       <table className="w-full border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-100">
                             {(csvPreviewRows[0] ?? []).slice(0, 8).map((hdr, ci) => {
                               const checked = csvKeepCols.includes(ci)
                               return (
-                                <th key={ci} className="border-r border-slate-200 px-3 py-1.5">
-                                  <label className="flex cursor-pointer items-center gap-1.5 font-bold text-ink-950">
+                                <th key={ci} className="border-r border-slate-200 px-2.5 py-1.5">
+                                  <div className="flex items-center gap-1.5 font-bold text-ink-950">
                                     <input
                                       type="checkbox"
                                       checked={checked}
@@ -1508,10 +2124,18 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                                           setCsvKeepCols([...csvKeepCols, ci].sort((a, b) => a - b))
                                         }
                                       }}
-                                      className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                                      className="h-3.5 w-3.5 shrink-0 accent-[#1D6FF2]"
+                                      title="Include/exclude column"
                                     />
-                                    <span className="truncate max-w-32">{hdr || `Col ${ci + 1}`}</span>
-                                  </label>
+                                    <input
+                                      type="text"
+                                      value={csvRenameCols[ci] ?? hdr}
+                                      onChange={(e) => setCsvRenameCols((prev) => ({ ...prev, [ci]: e.target.value }))}
+                                      placeholder={hdr || `Col ${ci + 1}`}
+                                      className="w-28 truncate rounded border border-transparent bg-transparent px-1 py-0.5 text-xs font-bold text-ink-950 hover:border-slate-300 focus:border-accent focus:bg-white"
+                                      title="Click to rename column header"
+                                    />
+                                  </div>
                                 </th>
                               )
                             })}
@@ -1628,6 +2252,114 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {tool.id === 'merge-word' && <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order with a page break between them. You can reorder them in the list above before merging.</p>}
             {tool.id === 'merge-presentations' && <p className="text-xs font-semibold text-slate-500">Slides are appended in upload order using the first deck&apos;s theme. Reorder your decks in the list above before processing.</p>}
+
+            {tool.id === 'split-presentations' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
+                  {[
+                    ['all', 'Every Slide into Separate PPTX'],
+                    ['ranges', 'Custom Slide Ranges (e.g. 1-3; 4-6)'],
+                    ['every-n', 'Split Every N Slides'],
+                  ].map(([m, lbl]) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setSplitPptxMode(m as never)}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${splitPptxMode === m ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                {splitPptxMode === 'ranges' && (
+                  <label className="block max-w-md">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Slide Ranges (separate decks with ;)</span>
+                    <input
+                      value={splitPptxRanges}
+                      onChange={(e) => setSplitPptxRanges(e.target.value)}
+                      placeholder="e.g. 1-2; 3-5"
+                      className="input font-mono"
+                    />
+                  </label>
+                )}
+                {splitPptxMode === 'every-n' && (
+                  <label className="block max-w-xs">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Slides per output presentation</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={splitPptxEveryN}
+                      onChange={(e) => setSplitPptxEveryN(Math.max(1, +e.target.value || 1))}
+                      className="input"
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+
+            {tool.id === 'pptx-to-pdf' && (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm font-bold text-ink-950">
+                  <input
+                    type="checkbox"
+                    checked={pptxIncludeNotes}
+                    onChange={(e) => setPptxIncludeNotes(e.target.checked)}
+                    className="h-4 w-4 accent-[#1D6FF2]"
+                  />
+                  Include speaker notes at the bottom of each PDF slide (when present)
+                </label>
+                <p className="text-xs text-slate-500">
+                  Renders each slide in widescreen 16:9 layout with titles, bullet points, embedded slide images, and slide numbering.
+                </p>
+              </div>
+            )}
+
+            {tool.id === 'slides-to-images' && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {sel('Image Format', slidesImgFormat, setSlidesImgFormat as never, [
+                  ['jpg', 'JPG (Compact slide images)'],
+                  ['png', 'PNG (Lossless crisp graphics)'],
+                ])}
+                {sel('Slide Resolution', String(scale), (v: string) => setScale(+v), [
+                  ['1', 'Standard HD (1280 × 720 px)'],
+                  ['1.5', 'Full HD+ (1920 × 1080 px)'],
+                  ['2', 'Ultra QHD (2560 × 1440 px)'],
+                ])}
+              </div>
+            )}
+
+            {tool.id === 'csv-to-excel' && files.length > 1 && (
+              <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-ink-950">
+                <input
+                  type="checkbox"
+                  checked={csvMergeSingleWorkbook}
+                  onChange={(e) => setCsvMergeSingleWorkbook(e.target.checked)}
+                  className="h-4 w-4 accent-[#1D6FF2]"
+                />
+                Combine all {files.length} CSV files into a single multi-sheet XLSX workbook (auto-fitted columns)
+              </label>
+            )}
+
+            {tool.id === 'excel-to-csv' && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {sel('CSV Delimiter', excelCsvDelim, setExcelCsvDelim, [
+                  [',', 'Comma ( , ) — Standard CSV'],
+                  [';', 'Semicolon ( ; ) — European Excel'],
+                  ['\t', 'Tab ( \\t ) — TSV'],
+                  ['|', 'Pipe ( | )'],
+                ])}
+                <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                  <input
+                    type="checkbox"
+                    checked={excelCsvBom}
+                    onChange={(e) => setExcelCsvBom(e.target.checked)}
+                    className="h-4 w-4 accent-[#1D6FF2]"
+                  />
+                  Include UTF-8 BOM (Ensures Excel opens international characters &amp; symbols properly)
+                </label>
+              </div>
+            )}
+
             {(tool.id === 'xlsx-to-pdf' || tool.id === 'excel-to-pdf') && (
               <div className="space-y-3">
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -1641,6 +2373,71 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </label>
                 </div>
                 <p className="text-xs font-semibold text-slate-500">Renders a proportional bordered PDF table with navy headers that repeat automatically across page breaks.</p>
+              </div>
+            )}
+
+            {excelPreview.length > 0 && (tool.id === 'excel-to-csv' || tool.id === 'excel-to-html' || tool.id === 'excel-to-pdf' || tool.id === 'xlsx-to-pdf') && (
+              <div className="space-y-2.5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                    Workbook Preview &amp; Sheet Filter ({sheetSel.length} of {excelPreview.length} worksheet{excelPreview.length === 1 ? '' : 's'} selected for export)
+                  </span>
+                  {excelPreview.length > 1 && (
+                    <div className="flex gap-2 text-xs font-bold">
+                      <button type="button" onClick={() => setSheetSel(excelPreview.map((s) => s.name))} className="text-accent hover:underline">Select All Sheets</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sheet tabs with checkboxes */}
+                <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
+                  {excelPreview.map((sh, idx) => {
+                    const checked = sheetSel.includes(sh.name)
+                    const active = activePreviewSheet === idx
+                    return (
+                      <div
+                        key={sh.name}
+                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                          active ? 'border-accent bg-white text-ink-950 shadow-sm' : 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            if (checked && sheetSel.length > 1) {
+                              setSheetSel(sheetSel.filter((n) => n !== sh.name))
+                            } else if (!checked) {
+                              setSheetSel([...sheetSel, sh.name])
+                            }
+                          }}
+                          className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                          title={`Include ${sh.name} in export`}
+                        />
+                        <button type="button" onClick={() => setActivePreviewSheet(idx)} className="truncate max-w-36">
+                          {sh.name} <span className="text-[10px] text-slate-400">({sh.totalRows}r)</span>
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Active sheet table preview */}
+                {excelPreview[activePreviewSheet] && (
+                  <div className="max-h-48 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <tbody>
+                        {excelPreview[activePreviewSheet].rows.map((row, ri) => (
+                          <tr key={ri} className={ri === 0 ? 'border-b border-slate-200 bg-slate-100 font-bold text-ink-950' : 'border-b border-slate-100 hover:bg-slate-50/60'}>
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="truncate border-r border-slate-100 px-3 py-1.5 max-w-40">{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
             {(tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') && (
@@ -1855,7 +2652,22 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 </p>
               </div>
             )}
-            {tool.id === 'compare-pdf' && <p className="text-xs font-semibold text-slate-500">Upload two PDF documents to compare them side-by-side. DocDoctor generates a split-view comparison PDF with diff callout badges plus a line-by-line text diff report.</p>}
+            {tool.id === 'compare-pdf' && (
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-bold text-ink-950">
+                  <input
+                    type="checkbox"
+                    checked={comparePixelDiff}
+                    onChange={(e) => setComparePixelDiff(e.target.checked)}
+                    className="h-4 w-4 accent-[#1D6FF2]"
+                  />
+                  <span>Highlight visual pixel differences in red on Document B (detects layout shifts, signatures, &amp; diagram changes alongside text diffs)</span>
+                </label>
+                <p className="text-xs font-semibold text-slate-500">
+                  Upload two PDF documents to compare them side-by-side. DocDoctor generates a split-view comparison PDF with visual pixel-diff callouts plus a line-by-line text diff report.
+                </p>
+              </div>
+            )}
             {tool.id === 'repair-pdf' && <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the document structure. Files that cannot be opened at all (truncated, heavily corrupted) cannot be repaired — you&apos;ll get a clear error instead of a fake success.</p>}
             {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Reconstructs headings, bold text, bullet lists, and multi-column tables from selectable PDF text into an editable Word document.</p>}
             {tool.id === 'pdf-to-excel' && <p className="text-xs font-semibold text-slate-500">Clusters horizontal text gaps into structured columns and auto-sizes Excel column widths, one worksheet per PDF page.</p>}
@@ -1863,15 +2675,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {tool.id === 'epub-to-pdf' && <p className="text-xs font-semibold text-slate-500">Extracts chapters in reading order and renders headings, paragraphs, lists, and tables into a clean PDF.</p>}
             {(tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && <p className="text-xs font-semibold text-slate-500">Selected pages and sections will be removed from the DOCX file while preserving all other styles, headers, footers and tables.</p>}
             {tool.id === 'protect-pdf' && (
-              <div className="space-y-3">
-                <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-3">
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-bold">Password (min 4 characters)</span>
+                    <span className="mb-1.5 block text-sm font-bold">Open Password (min 4 chars)</span>
                     <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} className="input" autoComplete="new-password" placeholder="Choose a password" />
                   </label>
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-bold">Confirm password</span>
+                    <span className="mb-1.5 block text-sm font-bold">Confirm Open Password</span>
                     <input type="password" value={pwd2} onChange={(e) => setPwd2(e.target.value)} className="input" autoComplete="new-password" placeholder="Repeat it" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold">Owner Password (Optional)</span>
+                    <input type="password" value={ownerPwd} onChange={(e) => setOwnerPwd(e.target.value)} className="input" autoComplete="new-password" placeholder="Defaults to open password" />
                   </label>
                 </div>
                 {pwd && (
@@ -1887,6 +2703,29 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     </div>
                   </div>
                 )}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                    Document Permissions (Enforced by PDF Readers)
+                  </span>
+                  <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={pdfAllowPrinting} onChange={(e) => setPdfAllowPrinting(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      Allow High-Res Printing
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={pdfAllowCopying} onChange={(e) => setPdfAllowCopying(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      Allow Copying Text
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={pdfAllowModifying} onChange={(e) => setPdfAllowModifying(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      Allow Modifying Pages
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={pdfAllowAnnotating} onChange={(e) => setPdfAllowAnnotating(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      Allow Annotations &amp; Forms
+                    </label>
+                  </div>
+                </div>
                 <p className="text-xs text-slate-500">AES-256 encryption, applied and verified in your browser — the password never leaves this tab. There is no recovery if you forget it.</p>
               </div>
             )}

@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb, StandardFonts, PDFName, PDFNumber, PDFRawStream } from 'pdf-lib'
+import { PDFDocument, degrees, rgb, StandardFonts, PDFName, PDFNumber, PDFRawStream, PDFString, PDFArray } from 'pdf-lib'
 import type { OutputFile } from './download'
 import { stem } from './download'
 
@@ -7,6 +7,22 @@ const pdfBlob = (bytes: Uint8Array): Blob =>
 
 async function load(bytes: ArrayBuffer) {
   return PDFDocument.load(bytes, { ignoreEncryption: false })
+}
+
+/** Convert positive integer to Roman numerals (lower or upper). */
+export function toRoman(num: number, upper = false): string {
+  const n = Math.max(1, Math.min(3999, Math.floor(num)))
+  const pairs: [number, string][] = [
+    [1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'],
+    [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'],
+    [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i'],
+  ]
+  let out = ''
+  let rem = n
+  for (const [val, sym] of pairs) {
+    while (rem >= val) { out += sym; rem -= val }
+  }
+  return upper ? out.toUpperCase() : out
 }
 
 /** Parse "1-3, 5, 8-10" (1-based) into sorted unique 0-based indices. */
@@ -27,31 +43,114 @@ export function parseRanges(input: string, pageCount: number): number[] {
   return [...out].sort((a, b) => a - b)
 }
 
-export async function mergePdfs(files: File[]): Promise<OutputFile> {
+export interface MergePdfOpts {
+  /** Optional per-file 1-based page range string, keyed by file index. */
+  fileRanges?: Record<number, string>
+  /** Add PDF Outline bookmarks for each source document. */
+  addBookmarks?: boolean
+}
+
+export async function mergePdfs(files: File[], opts?: MergePdfOpts): Promise<OutputFile> {
   if (files.length < 2) throw new Error('Select at least two PDFs to merge.')
   const out = await PDFDocument.create()
-  for (const f of files) {
+  const bookmarkEntries: { title: string; pageIndex: number }[] = []
+
+  for (let fi = 0; fi < files.length; fi++) {
+    const f = files[fi]
     const src = await load(await f.arrayBuffer())
-    const pages = await out.copyPages(src, src.getPageIndices())
+    const rangeStr = opts?.fileRanges?.[fi]?.trim()
+    const indices = rangeStr ? parseRanges(rangeStr, src.getPageCount()) : src.getPageIndices()
+    const startPageIndex = out.getPageCount()
+    const pages = await out.copyPages(src, indices)
     pages.forEach((p) => out.addPage(p))
+    bookmarkEntries.push({ title: stem(f.name) || `Document ${fi + 1}`, pageIndex: startPageIndex })
   }
+
+  // Attach top-level PDF Outlines (bookmarks) pointing to each merged file's starting page
+  if (opts?.addBookmarks !== false && bookmarkEntries.length > 0 && out.getPageCount() > 0) {
+    try {
+      const ctx = out.context
+      const outlinesRef = ctx.nextRef()
+      const itemRefs = bookmarkEntries.map(() => ctx.nextRef())
+      const pages = out.getPages()
+
+      bookmarkEntries.forEach((entry, i) => {
+        const targetPage = pages[Math.min(entry.pageIndex, pages.length - 1)]
+        const destArray = PDFArray.withContext(ctx)
+        destArray.push(targetPage.ref)
+        destArray.push(PDFName.of('XYZ'))
+        destArray.push(ctx.obj(null))
+        destArray.push(ctx.obj(null))
+        destArray.push(ctx.obj(null))
+
+        const itemDict = ctx.obj({
+          Title: PDFString.of(entry.title),
+          Parent: outlinesRef,
+          Dest: destArray,
+        })
+        if (i > 0) itemDict.set(PDFName.of('Prev'), itemRefs[i - 1])
+        if (i < bookmarkEntries.length - 1) itemDict.set(PDFName.of('Next'), itemRefs[i + 1])
+        ctx.assign(itemRefs[i], itemDict)
+      })
+
+      ctx.assign(outlinesRef, ctx.obj({
+        Type: PDFName.of('Outlines'),
+        First: itemRefs[0],
+        Last: itemRefs[itemRefs.length - 1],
+        Count: PDFNumber.of(itemRefs.length),
+      }))
+      out.catalog.set(PDFName.of('Outlines'), outlinesRef)
+    } catch {
+      // Non-fatal if outline injection fails
+    }
+  }
+
   return { name: 'merged.pdf', blob: pdfBlob(await out.save()) }
 }
 
-export async function splitPdf(file: File, ranges: string): Promise<OutputFile[]> {
+export interface SplitPdfOpts {
+  mode?: 'ranges' | 'every-n' | 'all-individual'
+  everyN?: number
+}
+
+export async function splitPdf(file: File, ranges: string, opts?: SplitPdfOpts): Promise<OutputFile[]> {
   const src = await load(await file.arrayBuffer())
-  const groups = ranges.split(';').map((s) => s.trim()).filter(Boolean)
+  const totalPages = src.getPageCount()
   const outs: OutputFile[] = []
+
+  if (opts?.mode === 'all-individual') {
+    for (let p = 0; p < totalPages; p++) {
+      const doc = await PDFDocument.create()
+      ;(await doc.copyPages(src, [p])).forEach((page) => doc.addPage(page))
+      outs.push({ name: `${stem(file.name)}-page-${p + 1}.pdf`, blob: pdfBlob(await doc.save()) })
+    }
+    return outs
+  }
+
+  if (opts?.mode === 'every-n') {
+    const step = Math.max(1, Math.floor(opts.everyN ?? 1))
+    let part = 1
+    for (let start = 0; start < totalPages; start += step) {
+      const idx: number[] = []
+      for (let j = start; j < Math.min(totalPages, start + step); j++) idx.push(j)
+      const doc = await PDFDocument.create()
+      ;(await doc.copyPages(src, idx)).forEach((page) => doc.addPage(page))
+      outs.push({ name: `${stem(file.name)}-part${part++}.pdf`, blob: pdfBlob(await doc.save()) })
+    }
+    return outs
+  }
+
+  const groups = ranges.split(';').map((s) => s.trim()).filter(Boolean)
   if (groups.length <= 1 && !ranges.includes(';')) {
     // Single range field may contain commas = one output with those pages.
-    const idx = parseRanges(ranges, src.getPageCount())
+    const idx = parseRanges(ranges, totalPages)
     const doc = await PDFDocument.create()
     ;(await doc.copyPages(src, idx)).forEach((p) => doc.addPage(p))
     outs.push({ name: `${stem(file.name)}-pages.pdf`, blob: pdfBlob(await doc.save()) })
     return outs
   }
   for (let i = 0; i < groups.length; i++) {
-    const idx = parseRanges(groups[i], src.getPageCount())
+    const idx = parseRanges(groups[i], totalPages)
     const doc = await PDFDocument.create()
     ;(await doc.copyPages(src, idx)).forEach((p) => doc.addPage(p))
     outs.push({ name: `${stem(file.name)}-part${i + 1}.pdf`, blob: pdfBlob(await doc.save()) })
@@ -92,10 +191,45 @@ export async function organizePdf(file: File, ops: PageOp[]): Promise<OutputFile
   return { name: `${stem(file.name)}-organized.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
-export async function rotatePdf(file: File, deg: number, pages: number[] | 'all'): Promise<OutputFile> {
+export interface RotatePdfOpts {
+  filter?: 'all' | 'odd' | 'even' | 'landscape' | 'portrait' | 'custom'
+  customRanges?: string
+}
+
+export async function rotatePdf(
+  file: File,
+  deg: number,
+  pages: number[] | 'all',
+  opts?: RotatePdfOpts,
+): Promise<OutputFile> {
   const doc = await load(await file.arrayBuffer())
-  const targets = pages === 'all' ? doc.getPageIndices() : pages
+  const total = doc.getPageCount()
+  let targets: number[]
+  if (opts?.filter && opts.filter !== 'all') {
+    if (opts.filter === 'odd') {
+      targets = doc.getPageIndices().filter((i) => (i + 1) % 2 === 1)
+    } else if (opts.filter === 'even') {
+      targets = doc.getPageIndices().filter((i) => (i + 1) % 2 === 0)
+    } else if (opts.filter === 'landscape') {
+      targets = doc.getPageIndices().filter((i) => {
+        const { width, height } = doc.getPage(i).getSize()
+        return width > height
+      })
+    } else if (opts.filter === 'portrait') {
+      targets = doc.getPageIndices().filter((i) => {
+        const { width, height } = doc.getPage(i).getSize()
+        return height >= width
+      })
+    } else if (opts.filter === 'custom' && opts.customRanges?.trim()) {
+      targets = parseRanges(opts.customRanges, total)
+    } else {
+      targets = doc.getPageIndices()
+    }
+  } else {
+    targets = pages === 'all' ? doc.getPageIndices() : pages
+  }
   for (const i of targets) {
+    if (i < 0 || i >= total) continue
     const p = doc.getPage(i)
     p.setRotation(degrees((p.getRotation().angle + deg) % 360))
   }
@@ -311,23 +445,36 @@ export async function compressPdf(
   return { name: `${stem(file.name)}-compressed.pdf`, blob: file }
 }
 
+export type PageNumberPosition =
+  | 'bottom-center' | 'bottom-right' | 'bottom-left'
+  | 'top-center' | 'top-right' | 'top-left'
+
 export interface PageNumberOpts {
   fontSize?: number
   colorHex?: string
   skipCover?: boolean
+  fontFamily?: 'Helvetica' | 'TimesRoman' | 'Courier'
+  numStyle?: 'arabic' | 'roman-lower' | 'roman-upper'
+  pageRange?: string
+  marginPt?: number
 }
 
 export async function addPageNumbers(
   file: File,
-  position: 'bottom-center' | 'bottom-right' | 'bottom-left',
+  position: PageNumberPosition,
   start: number,
   fmt: string,
   opts?: PageNumberOpts,
 ): Promise<OutputFile> {
   const doc = await load(await file.arrayBuffer())
-  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const fontName = opts?.fontFamily === 'TimesRoman'
+    ? StandardFonts.TimesRoman
+    : opts?.fontFamily === 'Courier'
+      ? StandardFonts.Courier
+      : StandardFonts.Helvetica
+  const font = await doc.embedFont(fontName)
   const size = opts?.fontSize ?? 10
-  const hex = (opts?.colorHex ?? '#596173').replace('#', '')
+  const hex = (opts?.colorHex ?? '#596173').replace('#', '').padEnd(6, '0')
   const col = rgb(
     parseInt(hex.slice(0, 2), 16) / 255,
     parseInt(hex.slice(2, 4), 16) / 255,
@@ -335,23 +482,43 @@ export async function addPageNumbers(
   )
   const skipCover = opts?.skipCover ?? false
   const total = doc.getPageCount()
+  const allowedSet = opts?.pageRange?.trim()
+    ? new Set(parseRanges(opts.pageRange, total))
+    : null
+  const margin = opts?.marginPt ?? 24
+  const fmtNum = (n: number) => {
+    if (opts?.numStyle === 'roman-lower') return toRoman(n, false)
+    if (opts?.numStyle === 'roman-upper') return toRoman(n, true)
+    return String(n)
+  }
 
   doc.getPages().forEach((page, i) => {
     if (skipCover && i === 0) return
+    if (allowedSet && !allowedSet.has(i)) return
     const num = skipCover ? start + i - 1 : start + i
-    const effectiveTotal = skipCover ? total - 1 : total
-    const label = fmt.replace('{n}', String(num)).replace('{total}', String(effectiveTotal))
-    const { width } = page.getSize()
+    const effectiveTotal = skipCover ? Math.max(1, total - 1) : total
+    const label = fmt.replace('{n}', fmtNum(num)).replace('{total}', fmtNum(effectiveTotal))
+    const { width, height } = page.getSize()
     const w = font.widthOfTextAtSize(label, size)
-    const x = position === 'bottom-center' ? (width - w) / 2 : position === 'bottom-right' ? width - w - 36 : 36
-    page.drawText(label, { x, y: 24, size, font, color: col })
+    const isTop = position.startsWith('top-')
+    const isCenter = position.endsWith('-center')
+    const isRight = position.endsWith('-right')
+    const x = isCenter ? (width - w) / 2 : isRight ? width - w - Math.max(24, margin + 12) : Math.max(24, margin + 12)
+    const y = isTop ? height - margin - size : margin
+    page.drawText(label, { x, y, size, font, color: col })
   })
   return { name: `${stem(file.name)}-numbered.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
+export type PdfWatermarkPosition = 'center' | 'tile' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+
 export interface PdfWatermarkOpts {
   angle?: number
   colorHex?: string
+  position?: PdfWatermarkPosition
+  imageBytes?: Uint8Array
+  imageMime?: 'image/png' | 'image/jpeg'
+  imageScale?: number
 }
 
 export async function watermarkPdf(
@@ -362,21 +529,73 @@ export async function watermarkPdf(
   opts?: PdfWatermarkOpts,
 ): Promise<OutputFile> {
   const doc = await load(await file.arrayBuffer())
-  const font = await doc.embedFont(StandardFonts.HelveticaBold)
   const angle = opts?.angle ?? -30
-  const hex = (opts?.colorHex ?? '#73738c').replace('#', '')
+  const pos: PdfWatermarkPosition = opts?.position ?? 'center'
+
+  if (opts?.imageBytes && opts.imageBytes.length > 0) {
+    const img = opts.imageMime === 'image/png'
+      ? await doc.embedPng(opts.imageBytes)
+      : await doc.embedJpg(opts.imageBytes)
+    const scaleRatio = Math.max(0.08, Math.min(0.85, opts.imageScale ?? 0.28))
+
+    for (const page of doc.getPages()) {
+      const { width, height } = page.getSize()
+      const drawW = width * scaleRatio
+      const drawH = (img.height / Math.max(1, img.width)) * drawW
+
+      if (pos === 'tile') {
+        const stepX = Math.max(140, drawW + 90)
+        const stepY = Math.max(120, drawH + 90)
+        for (let y = 36; y < height - 20; y += stepY) {
+          for (let x = 36; x < width - 20; x += stepX) {
+            page.drawImage(img, { x, y, width: drawW, height: drawH, opacity, rotate: degrees(angle) })
+          }
+        }
+      } else {
+        const x = pos === 'center' ? (width - drawW) / 2
+          : (pos === 'top-right' || pos === 'bottom-right') ? width - drawW - 36 : 36
+        const y = pos === 'center' ? (height - drawH) / 2
+          : (pos === 'top-left' || pos === 'top-right') ? height - drawH - 36 : 36
+        page.drawImage(img, { x, y, width: drawW, height: drawH, opacity, rotate: degrees(angle) })
+      }
+    }
+    return { name: `${stem(file.name)}-watermarked.pdf`, blob: pdfBlob(await doc.save()) }
+  }
+
+  const font = await doc.embedFont(StandardFonts.HelveticaBold)
+  const hex = (opts?.colorHex ?? '#73738c').replace('#', '').padEnd(6, '0')
   const col = rgb(
     parseInt(hex.slice(0, 2), 16) / 255,
     parseInt(hex.slice(2, 4), 16) / 255,
     parseInt(hex.slice(4, 6), 16) / 255
   )
+  const wmLabel = text || 'CONFIDENTIAL'
   for (const page of doc.getPages()) {
     const { width, height } = page.getSize()
-    page.drawText(text, {
-      x: width / 2 - font.widthOfTextAtSize(text, size) / 2,
-      y: height / 2,
-      size, font, color: col, opacity, rotate: degrees(angle),
-    })
+    const textW = font.widthOfTextAtSize(wmLabel, size)
+    if (pos === 'tile') {
+      const stepX = Math.max(160, textW + 100)
+      const stepY = Math.max(110, size * 3.5)
+      for (let y = 40; y < height; y += stepY) {
+        for (let x = 30; x < width; x += stepX) {
+          page.drawText(wmLabel, { x, y, size, font, color: col, opacity, rotate: degrees(angle) })
+        }
+      }
+    } else {
+      const x = pos === 'center' ? width / 2 - textW / 2
+        : (pos === 'top-right' || pos === 'bottom-right') ? Math.max(24, width - textW - 36) : 36
+      const y = pos === 'center' ? height / 2
+        : (pos === 'top-left' || pos === 'top-right') ? height - size - 36 : 36
+      page.drawText(wmLabel, {
+        x,
+        y,
+        size,
+        font,
+        color: col,
+        opacity,
+        rotate: degrees(pos === 'center' ? angle : 0),
+      })
+    }
   }
   return { name: `${stem(file.name)}-watermarked.pdf`, blob: pdfBlob(await doc.save()) }
 }
@@ -632,11 +851,15 @@ export function diffPageLines(linesA: string[], linesB: string[]): {
   }
 }
 
+export interface ComparePdfOpts extends ProcessOpts {
+  highlightPixelDiff?: boolean
+}
+
 /**
  * Compare two PDF files side-by-side: renders each page pair onto a split canvas,
- * highlighting page differences + text diffs, and bundles the result as a comparison PDF + text diff report.
+ * highlighting page differences + pixel-level visual diffs + text diffs, and bundles the result as a comparison PDF + text diff report.
  */
-export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promise<OutputFile[]> {
+export async function comparePdfs(files: File[], opts: ComparePdfOpts = {}): Promise<OutputFile[]> {
   if (files.length < 2) throw new Error('Please select at least two PDF documents to compare.')
   const [fA, fB] = files
   const bytesA = await fA.arrayBuffer()
@@ -661,7 +884,7 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
   let changedPages = 0
 
   const summaryLines: string[] = [
-    `DocDoctor PDF Comparison & Text Diff Report`,
+    `DocDoctor PDF Comparison & Text/Visual Diff Report`,
     `Generated: ${new Date().toLocaleString()}`,
     `Document A: ${fA.name} (${countA} pages)`,
     `Document B: ${fB.name} (${countB} pages)`,
@@ -675,9 +898,6 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     const linesB = textPagesB[i - 1]?.lines ?? []
     const diff = diffPageLines(linesA, linesB)
     const bothExist = i <= countA && i <= countB
-    const isMatch = bothExist && diff.identical
-    if (isMatch) identicalPages++
-    else changedPages++
 
     const c = document.createElement('canvas')
     c.width = W
@@ -686,41 +906,14 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     ctx.fillStyle = '#f8fafc'
     ctx.fillRect(0, 0, W, H)
 
-    // Header banner
-    ctx.fillStyle = '#0b1526'
-    ctx.fillRect(0, 0, W, headerH)
-    ctx.fillStyle = '#ffffff'
-    ctx.font = 'bold 14px system-ui, sans-serif'
-    ctx.fillText(`Doc A: ${fA.name} (Page ${i <= countA ? i : '-'} of ${countA})`, 24, 31)
-    ctx.fillText(`Doc B: ${fB.name} (Page ${i <= countB ? i : '-'} of ${countB})`, W / 2 + 24, 31)
-
-    // Status pill in center of header
-    const badgeText = isMatch
-      ? '✓ TEXT MATCH'
-      : !bothExist
-        ? '⚠ PAGE COUNT DIFF'
-        : `⚠ ${diff.removed.length} REMOVED · ${diff.added.length} ADDED`
-    ctx.fillStyle = isMatch ? '#10b981' : '#f59e0b'
-    ctx.fillRect(W / 2 - 110, 12, 220, 28)
-    ctx.fillStyle = '#0b1526'
-    ctx.font = 'bold 11px system-ui, sans-serif'
-    ctx.fillText(badgeText, W / 2 - 96, 30)
-
-    // Vertical divider
-    ctx.strokeStyle = '#cbd5e1'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(W / 2, headerH)
-    ctx.lineTo(W / 2, H - footerH)
-    ctx.stroke()
-
     const halfW = W / 2 - 40
     const availH = H - headerH - footerH - 30
+    let pageCanvasA: HTMLCanvasElement | null = null
 
     if (i <= countA) {
       const pA = await pdfA.getPage(i)
       const vpA = pA.getViewport({ scale })
-      const pageCanvasA = document.createElement('canvas')
+      pageCanvasA = document.createElement('canvas')
       pageCanvasA.width = Math.floor(vpA.width)
       pageCanvasA.height = Math.floor(vpA.height)
       const ctxA = pageCanvasA.getContext('2d')!
@@ -739,6 +932,7 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
       ctx.fillText('(No corresponding page in Doc A)', 80, (H - footerH) / 2)
     }
 
+    let pixelDiffPct = 0
     if (i <= countB) {
       const pB = await pdfB.getPage(i)
       const vpB = pB.getViewport({ scale })
@@ -749,6 +943,38 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
       ctxB.fillStyle = '#ffffff'
       ctxB.fillRect(0, 0, pageCanvasB.width, pageCanvasB.height)
       await pB.render({ canvas: pageCanvasB, viewport: vpB }).promise
+
+      // Compute pixel-level visual difference and optionally highlight changed pixels on Doc B
+      if (pageCanvasA && opts.highlightPixelDiff !== false) {
+        try {
+          const cmpW = Math.min(pageCanvasA.width, pageCanvasB.width)
+          const cmpH = Math.min(pageCanvasA.height, pageCanvasB.height)
+          const dataA = pageCanvasA.getContext('2d')!.getImageData(0, 0, cmpW, cmpH).data
+          const imgDataB = ctxB.getImageData(0, 0, cmpW, cmpH)
+          const dataB = imgDataB.data
+          let diffPixels = 0
+          const totalPixels = Math.max(1, cmpW * cmpH)
+          for (let p = 0; p < dataB.length; p += 4) {
+            const dr = Math.abs(dataA[p] - dataB[p])
+            const dg = Math.abs(dataA[p + 1] - dataB[p + 1])
+            const db = Math.abs(dataA[p + 2] - dataB[p + 2])
+            if (dr + dg + db > 48) {
+              diffPixels++
+              // Tint changed pixel with semi-transparent magenta-red highlight
+              dataB[p] = Math.min(255, Math.round(dataB[p] * 0.45 + 239 * 0.55))
+              dataB[p + 1] = Math.round(dataB[p + 1] * 0.35 + 68 * 0.2)
+              dataB[p + 2] = Math.round(dataB[p + 2] * 0.35 + 68 * 0.2)
+            }
+          }
+          pixelDiffPct = Math.round((diffPixels / totalPixels) * 1000) / 10
+          if (diffPixels > 0) {
+            ctxB.putImageData(imgDataB, 0, 0)
+          }
+        } catch {
+          // Ignore canvas readback errors
+        }
+      }
+
       const s = Math.min(halfW / pageCanvasB.width, availH / pageCanvasB.height)
       const drawW = pageCanvasB.width * s
       const drawH = pageCanvasB.height * s
@@ -760,6 +986,40 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
       ctx.font = 'italic 16px system-ui, sans-serif'
       ctx.fillText('(No corresponding page in Doc B)', W / 2 + 80, (H - footerH) / 2)
     }
+
+    const isMatch = bothExist && diff.identical && pixelDiffPct < 0.2
+    if (isMatch) identicalPages++
+    else changedPages++
+
+    // Header banner
+    ctx.fillStyle = '#0b1526'
+    ctx.fillRect(0, 0, W, headerH)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 14px system-ui, sans-serif'
+    ctx.fillText(`Doc A: ${fA.name} (Page ${i <= countA ? i : '-'} of ${countA})`, 24, 31)
+    ctx.fillText(`Doc B: ${fB.name} (Page ${i <= countB ? i : '-'} of ${countB})`, W / 2 + 24, 31)
+
+    // Status pill in center of header
+    const badgeText = isMatch
+      ? '✓ MATCH'
+      : !bothExist
+        ? '⚠ PAGE COUNT DIFF'
+        : diff.identical && pixelDiffPct > 0
+          ? `⚠ VISUAL DIFF (${pixelDiffPct}% px)`
+          : `⚠ ${diff.removed.length} REM · ${diff.added.length} ADD${pixelDiffPct > 0 ? ` · ${pixelDiffPct}% PX` : ''}`
+    ctx.fillStyle = isMatch ? '#10b981' : '#f59e0b'
+    ctx.fillRect(W / 2 - 125, 12, 250, 28)
+    ctx.fillStyle = '#0b1526'
+    ctx.font = 'bold 11px system-ui, sans-serif'
+    ctx.fillText(badgeText, W / 2 - 112, 30)
+
+    // Vertical divider
+    ctx.strokeStyle = '#cbd5e1'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(W / 2, headerH)
+    ctx.lineTo(W / 2, H - footerH)
+    ctx.stroke()
 
     // Bottom text-diff strip on canvas
     ctx.fillStyle = isMatch ? '#ecfdf5' : '#fffbeb'
@@ -774,10 +1034,10 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     ctx.font = '12px monospace'
     if (isMatch) {
       ctx.fillStyle = '#065f46'
-      ctx.fillText(`Page ${i}: All ${diff.unchangedCount} text line(s) match between Document A and Document B.`, 24, H - footerH + 38)
+      ctx.fillText(`Page ${i}: All ${diff.unchangedCount} text line(s) and visual layout match between Document A and Document B.`, 24, H - footerH + 38)
     } else {
       ctx.fillStyle = '#991b1b'
-      const remPreview = diff.removed[0] ? `- ${diff.removed[0].slice(0, 75)}` : '(no lines removed)'
+      const remPreview = diff.removed[0] ? `- ${diff.removed[0].slice(0, 75)}` : `(Visual pixel diff: ${pixelDiffPct}% changed)`
       ctx.fillText(remPreview, 24, H - footerH + 26)
       ctx.fillStyle = '#065f46'
       const addPreview = diff.added[0] ? `+ ${diff.added[0].slice(0, 75)}` : '(no lines added)'
@@ -792,10 +1052,10 @@ export async function comparePdfs(files: File[], opts: ProcessOpts = {}): Promis
     } else if (i > countB) {
       summaryLines.push(`Status: Removed page in Document B (Document B has only ${countB} pages).`)
       diff.removed.slice(0, 30).forEach((l) => summaryLines.push(`  - ${l}`))
-    } else if (diff.identical) {
-      summaryLines.push(`Status: IDENTICAL (${diff.unchangedCount} lines matched)`)
+    } else if (isMatch) {
+      summaryLines.push(`Status: IDENTICAL (${diff.unchangedCount} lines matched, 0% visual diff)`)
     } else {
-      summaryLines.push(`Status: MODIFIED (${diff.unchangedCount} unchanged, ${diff.removed.length} removed, ${diff.added.length} added)`)
+      summaryLines.push(`Status: MODIFIED (${diff.unchangedCount} unchanged, ${diff.removed.length} removed, ${diff.added.length} added, ${pixelDiffPct}% visual pixel diff)`)
       diff.removed.slice(0, 30).forEach((l) => summaryLines.push(`  - [Doc A] ${l}`))
       diff.added.slice(0, 30).forEach((l) => summaryLines.push(`  + [Doc B] ${l}`))
     }

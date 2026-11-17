@@ -78,5 +78,16 @@ check('docx pages listed with page numbers', docxPages.length >= 1 && docxPages[
 const removedPages = await OFF.removeDocxPages(docxFile, [2, 3])
 check('remove docx pages produces valid docx', (await OFF.wordExtractText(asFile(removedPages.blob, 'p.docx', OFF.DOCX_TYPE))).includes('Keep this paragraph.'))
 
+// Protect PDF with ownerPassword and granular permissions
+const permProtected = await CRY.protectPdf(pdfFile, 'user1234', {
+  ownerPassword: 'owner9999',
+  allowPrinting: false,
+  allowCopying: false,
+  allowModifying: false,
+  allowAnnotating: false,
+})
+const permOpened = await CantooDoc.load(new Uint8Array(await permProtected.blob.arrayBuffer()), { password: 'user1234' })
+check('protectPdf with ownerPassword and restricted permissions opens with user password', permOpened.getPageCount() === 1)
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

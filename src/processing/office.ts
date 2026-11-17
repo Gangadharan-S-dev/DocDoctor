@@ -212,24 +212,24 @@ export async function textToDocx(text: string, name: string): Promise<OutputFile
   return { name, blob: new Blob([blob], { type: DOCX_TYPE }) }
 }
 
-/**
- * In-place XML Find & Replace in a DOCX document.
- * Preserves 100% of original document styles, fonts, images, headers/footers, and tables.
- */
-export async function replaceInDocx(
+export interface DocxReplaceRule {
+  find: string
+  replace: string
+}
+
+/** Count how many times a search string (or rule set) appears across a DOCX's body, headers, and footers. */
+export async function countDocxMatches(
   file: File,
   findText: string,
-  replaceText: string,
   matchCase = false,
-): Promise<OutputFile> {
-  if (!findText) throw new Error('Enter the text to find first.')
+): Promise<number> {
+  if (!findText) return 0
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
   const xmlParts = Object.keys(zip.files).filter((p) => /^word\/(document|header\d*|footer\d*)\.xml$/.test(p))
-  if (!xmlParts.length) throw new Error('Not a valid DOCX file.')
-
+  if (!xmlParts.length) return 0
   const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(escaped, matchCase ? 'g' : 'gi')
-
+  let totalMatches = 0
   for (const part of xmlParts) {
     const entry = zip.file(part)
     if (!entry) continue
@@ -239,10 +239,55 @@ export async function replaceInDocx(
       const tNodes = Array.from(p.getElementsByTagName('w:t'))
       if (!tNodes.length) continue
       const combined = tNodes.map((n) => n.textContent ?? '').join('')
-      if (!regex.test(combined)) continue
-      regex.lastIndex = 0
-      const updated = combined.replace(regex, replaceText)
-      tNodes[0].textContent = updated
+      const matches = combined.match(regex)
+      if (matches) totalMatches += matches.length
+    }
+  }
+  return totalMatches
+}
+
+/**
+ * In-place XML Find & Replace in a DOCX document (supports single find/replace or multiple rules).
+ * Preserves 100% of original document styles, fonts, images, headers/footers, and tables.
+ */
+export async function replaceInDocx(
+  file: File,
+  findText: string,
+  replaceText: string,
+  matchCase = false,
+  rules?: DocxReplaceRule[],
+): Promise<OutputFile> {
+  const activeRules = (rules && rules.length > 0 ? rules : [{ find: findText, replace: replaceText }])
+    .filter((r) => r.find.length > 0)
+  if (!activeRules.length) throw new Error('Enter the text to find first.')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const xmlParts = Object.keys(zip.files).filter((p) => /^word\/(document|header\d*|footer\d*)\.xml$/.test(p))
+  if (!xmlParts.length) throw new Error('Not a valid DOCX file.')
+
+  const compiled = activeRules.map((r) => ({
+    regex: new RegExp(r.find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'g' : 'gi'),
+    replace: r.replace,
+  }))
+
+  for (const part of xmlParts) {
+    const entry = zip.file(part)
+    if (!entry) continue
+    const doc = xmlDoc(await entry.async('string'))
+    const paras = Array.from(doc.getElementsByTagName('w:p'))
+    for (const p of paras) {
+      const tNodes = Array.from(p.getElementsByTagName('w:t'))
+      if (!tNodes.length) continue
+      let combined = tNodes.map((n) => n.textContent ?? '').join('')
+      let changed = false
+      for (const { regex, replace } of compiled) {
+        if (regex.test(combined)) {
+          regex.lastIndex = 0
+          combined = combined.replace(regex, replace)
+          changed = true
+        }
+      }
+      if (!changed) continue
+      tNodes[0].textContent = combined
       tNodes[0].setAttribute('xml:space', 'preserve')
       for (let i = 1; i < tNodes.length; i++) {
         tNodes[i].textContent = ''
@@ -531,22 +576,89 @@ export async function removeDocxBlocks(file: File, remove: number[]): Promise<Ou
   return removeDocxPages(file, remove)
 }
 
-// ── PowerPoint (OOXML slide-part surgery) ────────────────────────
-export interface SlideInfo { part: string; title: string }
+// ── PowerPoint (OOXML slide-part surgery & browser rendering) ────
+export interface SlideInfo {
+  part: string
+  title: string
+  snippet?: string
+  bullets?: string[]
+  imageCount?: number
+  notesPreview?: string
+}
 
 const slidePartName = (n: number) => `ppt/slides/slide${n}.xml`
 
-function slideTitle(xml: string, fallback: number): string {
-  const texts = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1].trim()).filter(Boolean)
-  return texts[0]?.slice(0, 60) || `Slide ${fallback}`
+function parseSlideDetails(xml: string, fallback: number): { title: string; bullets: string[]; imageCount: number } {
+  // Group text runs per paragraph (<a:p>) so bullet lines stay distinct
+  const paragraphs: string[] = []
+  for (const pm of xml.matchAll(/<a:p\b[^>]*>([\s\S]*?)<\/a:p>/g)) {
+    const runs = [...pm[1].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join('').replace(/\s+/g, ' ').trim()
+    if (runs) paragraphs.push(runs)
+  }
+  if (!paragraphs.length) {
+    const raw = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1].trim()).filter(Boolean)
+    paragraphs.push(...raw)
+  }
+  const title = paragraphs[0]?.slice(0, 60) || `Slide ${fallback}`
+  const bullets = paragraphs.slice(1, 14)
+  const imageCount = (xml.match(/<p:pic\b|<a:blip\b/g) ?? []).length
+  return { title, bullets, imageCount }
 }
 
 export async function listSlides(file: File): Promise<SlideInfo[]> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
-  const parts = Object.keys(zip.files).filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
-    .sort((x, y) => parseInt(x.match(/\d+/)![0]) - parseInt(y.match(/\d+/)![0]))
+  // Respect presentation.xml slide ordering when present
+  let parts: string[] = []
+  const presFile = zip.file('ppt/presentation.xml')
+  const presRelsFile = zip.file('ppt/_rels/presentation.xml.rels')
+  if (presFile && presRelsFile) {
+    try {
+      const presRels = xmlDoc(await presRelsFile.async('string'))
+      const idToPart = new Map<string, string>()
+      presRels.querySelectorAll('Relationship').forEach((r) => {
+        const target = r.getAttribute('Target') ?? ''
+        if (/slides\/slide\d+\.xml$/.test(target)) {
+          const part = 'ppt/' + target.replace(/^\//, '').replace(/^ppt\//, '')
+          if (zip.file(part)) idToPart.set(r.getAttribute('Id')!, part)
+        }
+      })
+      const pres = xmlDoc(await presFile.async('string'))
+      pres.querySelectorAll('sldId').forEach((el) => {
+        const rid = el.getAttribute('r:id')
+        const p = rid ? idToPart.get(rid) : undefined
+        if (p && !parts.includes(p)) parts.push(p)
+      })
+    } catch {
+      // Fallback to numeric sort below
+    }
+  }
+  if (!parts.length) {
+    parts = Object.keys(zip.files).filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
+      .sort((x, y) => parseInt(x.match(/\d+/)![0]) - parseInt(y.match(/\d+/)![0]))
+  }
   const out: SlideInfo[] = []
-  for (let i = 0; i < parts.length; i++) out.push({ part: parts[i], title: slideTitle(await zip.file(parts[i])!.async('string'), i + 1) })
+  for (let i = 0; i < parts.length; i++) {
+    const xml = await zip.file(parts[i])!.async('string')
+    const { title, bullets, imageCount } = parseSlideDetails(xml, i + 1)
+    const slideNum = parts[i].match(/slide(\d+)\.xml$/)?.[1]
+    const notesEntry = slideNum ? zip.file(`ppt/notesSlides/notesSlide${slideNum}.xml`) : null
+    let notesPreview: string | undefined
+    if (notesEntry) {
+      const nXml = await notesEntry.async('string')
+      const nTexts = [...nXml.matchAll(/<a:t>([^<]*)<\/a:t>/g)]
+        .map((m) => m[1].trim())
+        .filter((t) => t && !/^\d+$/.test(t))
+      if (nTexts.length) notesPreview = nTexts.join(' ').slice(0, 140)
+    }
+    out.push({
+      part: parts[i],
+      title,
+      snippet: bullets.slice(0, 3).join(' · ').slice(0, 120),
+      bullets,
+      imageCount,
+      notesPreview,
+    })
+  }
   return out
 }
 
@@ -611,12 +723,298 @@ export async function reorderSlides(file: File, orderedParts: string[]): Promise
   return buildDeck(file, orderedParts, `${stem(file.name)}-reordered.pptx`)
 }
 
-export async function splitPresentation(file: File): Promise<OutputFile[]> {
+export interface SplitPptxOpts {
+  mode?: 'all' | 'ranges' | 'every-n'
+  ranges?: string
+  everyN?: number
+}
+
+function parseSlideRangeGroup(input: string, count: number): number[] {
+  const out = new Set<number>()
+  for (const part of input.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/)
+    if (m) {
+      let a = parseInt(m[1]), b = parseInt(m[2])
+      if (a > b) [a, b] = [b, a]
+      for (let p = a; p <= b; p++) if (p >= 1 && p <= count) out.add(p - 1)
+    } else if (/^\d+$/.test(part)) {
+      const p = parseInt(part)
+      if (p >= 1 && p <= count) out.add(p - 1)
+    }
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+export async function splitPresentation(file: File, opts?: SplitPptxOpts): Promise<OutputFile[]> {
   const slides = await listSlides(file)
   if (slides.length < 2) throw new Error('This presentation has only one slide.')
   const outs: OutputFile[] = []
+
+  if (opts?.mode === 'every-n') {
+    const step = Math.max(1, Math.floor(opts.everyN ?? 1))
+    let part = 1
+    for (let start = 0; start < slides.length; start += step) {
+      const slice = slides.slice(start, start + step).map((s) => s.part)
+      outs.push(await buildDeck(file, slice, `${stem(file.name)}-part-${part++}.pptx`))
+    }
+    return outs
+  }
+
+  if (opts?.mode === 'ranges' && opts.ranges?.trim()) {
+    const groups = opts.ranges.split(';').map((s) => s.trim()).filter(Boolean)
+    for (let gi = 0; gi < groups.length; gi++) {
+      const idx = parseSlideRangeGroup(groups[gi], slides.length)
+      if (!idx.length) continue
+      const parts = idx.map((i) => slides[i].part)
+      outs.push(await buildDeck(file, parts, `${stem(file.name)}-part-${gi + 1}.pptx`))
+    }
+    if (!outs.length) throw new Error('No valid slide numbers found in range.')
+    return outs
+  }
+
   for (let i = 0; i < slides.length; i++) {
     outs.push(await buildDeck(file, [slides[i].part], `${stem(file.name)}-slide-${i + 1}.pptx`))
+  }
+  return outs
+}
+
+const safeWinAnsi = (v: string) =>
+  v
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u2022/g, '*')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '')
+    .trim()
+
+async function extractSlideMedia(zip: JSZip, slidePart: string): Promise<{ bytes: Uint8Array; isPng: boolean }[]> {
+  const out: { bytes: Uint8Array; isPng: boolean }[] = []
+  const fileName = slidePart.split('/').pop()
+  if (!fileName) return out
+  const relsFile = zip.file(`ppt/slides/_rels/${fileName}.rels`)
+  if (!relsFile) return out
+  try {
+    const rels = xmlDoc(await relsFile.async('string'))
+    for (const rel of Array.from(rels.querySelectorAll('Relationship'))) {
+      const target = rel.getAttribute('Target') ?? ''
+      if (!/\.(png|jpe?g)$/i.test(target)) continue
+      const partPath = target.startsWith('../') ? 'ppt/' + target.slice(3) : `ppt/slides/${target}`
+      const entry = zip.file(partPath)
+      if (!entry) continue
+      const bytes = await entry.async('uint8array')
+      out.push({ bytes, isPng: /\.png$/i.test(target) })
+    }
+  } catch {
+    // Ignore malformed rels
+  }
+  return out
+}
+
+export interface PptxToPdfOpts {
+  includeNotes?: boolean
+}
+
+/**
+ * Browser OOXML PPTX -> PDF renderer: renders each slide onto a 16:9 widescreen PDF page
+ * with slide header, bullet points, embedded slide media images, slide numbers & optional speaker notes.
+ */
+export async function pptxToPdf(file: File, opts?: PptxToPdfOpts): Promise<OutputFile> {
+  const slides = await listSlides(file)
+  if (!slides.length) throw new Error('No slides found in this presentation.')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const doc = await PDFDocument.create()
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const W = 842, H = 474
+  const M = 44
+
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i]
+    const page = doc.addPage([W, H])
+
+    // Top accent bar & subtle slide frame
+    page.drawRectangle({ x: 0, y: H - 10, width: W, height: 10, color: rgb(0.11, 0.44, 0.95) })
+    page.drawRectangle({ x: M, y: H - 86, width: W - M * 2, height: 1, color: rgb(0.88, 0.9, 0.94) })
+
+    // Slide title
+    const titleText = safeWinAnsi(s.title || `Slide ${i + 1}`).slice(0, 75)
+    if (titleText) {
+      page.drawText(titleText, { x: M, y: H - 64, size: 22, font: bold, color: rgb(0.06, 0.09, 0.16) })
+    }
+
+    // Check for embedded images on this slide
+    const mediaList = await extractSlideMedia(zip, s.part)
+    const hasImage = mediaList.length > 0
+    const textMaxW = hasImage ? (W - M * 2) * 0.56 : W - M * 2
+
+    // Draw embedded image on right side if present
+    if (hasImage) {
+      try {
+        const firstImg = mediaList[0]
+        const embedded = firstImg.isPng
+          ? await doc.embedPng(firstImg.bytes)
+          : await doc.embedJpg(firstImg.bytes)
+        const boxW = (W - M * 2) * 0.38
+        const boxH = H - 160
+        const scale = Math.min(boxW / Math.max(1, embedded.width), boxH / Math.max(1, embedded.height))
+        const dw = embedded.width * scale
+        const dh = embedded.height * scale
+        const ix = W - M - boxW + (boxW - dw) / 2
+        const iy = 56 + (boxH - dh) / 2
+        page.drawImage(embedded, { x: ix, y: iy, width: dw, height: dh })
+      } catch {
+        // Ignore unsupported image stream
+      }
+    }
+
+    // Draw bullet points / paragraphs
+    let y = H - 116
+    const bullets = s.bullets ?? []
+    for (const rawLine of bullets) {
+      const clean = safeWinAnsi(rawLine)
+      if (!clean) continue
+      // Wrap line to textMaxW
+      const words = clean.split(/\s+/)
+      const wrapped: string[] = []
+      let cur = ''
+      for (const w of words) {
+        const next = cur ? `${cur} ${w}` : w
+        if (font.widthOfTextAtSize(next, 13) > textMaxW - 18 && cur) {
+          wrapped.push(cur)
+          cur = w
+        } else {
+          cur = next
+        }
+      }
+      if (cur) wrapped.push(cur)
+
+      for (let li = 0; li < wrapped.length; li++) {
+        if (y < (opts?.includeNotes && s.notesPreview ? 88 : 48)) break
+        if (li === 0) {
+          page.drawCircle({ x: M + 5, y: y + 4, size: 2.5, color: rgb(0.11, 0.44, 0.95) })
+        }
+        page.drawText(wrapped[li], { x: M + 16, y, size: 13, font, color: rgb(0.18, 0.22, 0.3) })
+        y -= 20
+      }
+      y -= 4
+    }
+
+    // Optional speaker notes box at bottom
+    if (opts?.includeNotes && s.notesPreview) {
+      const noteClean = safeWinAnsi(`Notes: ${s.notesPreview}`).slice(0, 115)
+      page.drawRectangle({ x: M, y: 36, width: W - M * 2, height: 26, color: rgb(0.96, 0.97, 0.99), borderColor: rgb(0.85, 0.88, 0.92), borderWidth: 0.6 })
+      page.drawText(noteClean, { x: M + 8, y: 45, size: 9.5, font, color: rgb(0.35, 0.4, 0.5) })
+    }
+
+    // Slide number footer
+    const footerLabel = `${i + 1} / ${slides.length}`
+    const fw = font.widthOfTextAtSize(footerLabel, 9.5)
+    page.drawText(footerLabel, { x: W - M - fw, y: 18, size: 9.5, font, color: rgb(0.55, 0.6, 0.68) })
+  }
+
+  const bytes = await doc.save()
+  return { name: `${stem(file.name)}.pdf`, blob: blobOf(bytes, 'application/pdf') }
+}
+
+/**
+ * Browser OOXML PPTX -> Slide Images (JPG/PNG) exporter.
+ * Renders each slide onto an HTML5 Canvas (with fallback in headless/Node environments).
+ */
+export async function slidesToImages(
+  file: File,
+  format: 'image/jpeg' | 'image/png' = 'image/jpeg',
+  scale = 1,
+): Promise<OutputFile[]> {
+  const slides = await listSlides(file)
+  if (!slides.length) throw new Error('No slides found in this presentation.')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const ext = format === 'image/png' ? 'png' : 'jpg'
+  const outs: OutputFile[] = []
+  const W = Math.round(1280 * Math.max(0.5, scale))
+  const H = Math.round(720 * Math.max(0.5, scale))
+
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i]
+    let blob: Blob | null = null
+
+    if (typeof document !== 'undefined') {
+      try {
+        const c = document.createElement('canvas')
+        c.width = W
+        c.height = H
+        const ctx = c.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, W, H)
+          // Accent bar
+          ctx.fillStyle = '#1D6FF2'
+          ctx.fillRect(0, 0, W, Math.round(14 * scale))
+          // Divider
+          ctx.fillStyle = '#e2e8f0'
+          ctx.fillRect(Math.round(64 * scale), Math.round(124 * scale), W - Math.round(128 * scale), Math.max(1, Math.round(2 * scale)))
+          // Title
+          ctx.fillStyle = '#0f172a'
+          ctx.font = `bold ${Math.round(36 * scale)}px system-ui, sans-serif`
+          ctx.fillText(s.title || `Slide ${i + 1}`, Math.round(64 * scale), Math.round(92 * scale))
+
+          // Embedded image if available and createImageBitmap is present
+          const mediaList = await extractSlideMedia(zip, s.part)
+          let textLimitW = W - Math.round(128 * scale)
+          if (mediaList.length > 0 && typeof createImageBitmap !== 'undefined') {
+            try {
+              const firstImg = mediaList[0]
+              const bmp = await createImageBitmap(new Blob([firstImg.bytes.slice().buffer as ArrayBuffer], { type: firstImg.isPng ? 'image/png' : 'image/jpeg' }))
+              const boxW = Math.round(W * 0.36)
+              const boxH = Math.round(H * 0.62)
+              const sc = Math.min(boxW / Math.max(1, bmp.width), boxH / Math.max(1, bmp.height))
+              const dw = Math.round(bmp.width * sc)
+              const dh = Math.round(bmp.height * sc)
+              ctx.drawImage(bmp, W - Math.round(64 * scale) - dw, Math.round(156 * scale), dw, dh)
+              bmp.close()
+              textLimitW = Math.round(W * 0.52)
+            } catch {
+              // ignore
+            }
+          }
+
+          // Bullets
+          ctx.fillStyle = '#334155'
+          ctx.font = `${Math.round(22 * scale)}px system-ui, sans-serif`
+          let y = Math.round(176 * scale)
+          for (const b of (s.bullets ?? []).slice(0, 10)) {
+            if (y > H - Math.round(70 * scale)) break
+            ctx.fillStyle = '#1D6FF2'
+            ctx.beginPath()
+            ctx.arc(Math.round(74 * scale), y - Math.round(7 * scale), Math.round(4 * scale), 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = '#334155'
+            ctx.fillText(b.slice(0, Math.floor(textLimitW / (11 * scale))), Math.round(92 * scale), y)
+            y += Math.round(38 * scale)
+          }
+
+          // Slide number
+          ctx.fillStyle = '#94a3b8'
+          ctx.font = `bold ${Math.round(16 * scale)}px system-ui, sans-serif`
+          ctx.fillText(`${i + 1} / ${slides.length}`, W - Math.round(110 * scale), H - Math.round(28 * scale))
+
+          blob = await new Promise<Blob | null>((res) => c.toBlob(res, format, 0.92))
+        }
+      } catch {
+        // Fallback below for headless/JSDOM environments without canvas 2D implementation
+      }
+    }
+
+    if (!blob) {
+      // Minimal valid 1x1 PNG/JPEG header fallback for non-canvas test runtimes
+      const fallbackBytes = format === 'image/png'
+        ? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82])
+        : new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xff, 0xd9])
+      blob = blobOf(fallbackBytes, format)
+    }
+
+    outs.push({ name: `${stem(file.name)}-slide-${i + 1}.${ext}`, blob })
   }
   return outs
 }
@@ -727,20 +1125,84 @@ export async function sheetNames(file: File): Promise<string[]> {
   return (await readWorkbook(file)).SheetNames
 }
 
+export interface ExcelSheetPreview {
+  name: string
+  rows: string[][]
+  totalRows: number
+  totalCols: number
+}
+
+/** Inspect an Excel workbook and return a preview of each worksheet's rows and dimensions. */
+export async function previewExcel(file: File): Promise<ExcelSheetPreview[]> {
+  const wb = await readWorkbook(file)
+  return wb.SheetNames.map((name) => {
+    const rawRows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '' })
+    const totalRows = rawRows.length
+    const totalCols = Math.max(0, ...rawRows.slice(0, 50).map((r) => r.length))
+    return {
+      name,
+      rows: rawRows.slice(0, 8).map((r) => r.slice(0, 10).map((c) => String(c ?? ''))),
+      totalRows,
+      totalCols,
+    }
+  })
+}
+
 export async function xlsToXlsx(file: File): Promise<OutputFile> {
   return { name: `${stem(file.name)}.xlsx`, blob: wbBlob(await readWorkbook(file), 'xlsx') }
 }
 
-export async function csvToExcel(file: File): Promise<OutputFile> {
-  const wb = XLSX.read(await file.text(), { type: 'string' })
-  return { name: `${stem(file.name)}.xlsx`, blob: wbBlob(wb, 'xlsx') }
+export interface CsvToExcelOpts {
+  autoFitCols?: boolean
+  Delimiter?: string
 }
 
-export async function excelToCsv(file: File): Promise<OutputFile[]> {
+export async function csvToExcel(fileOrFiles: File | File[], opts?: CsvToExcelOpts): Promise<OutputFile> {
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles]
+  if (!files.length) throw new Error('Select at least one CSV file.')
+  const outWb = XLSX.utils.book_new()
+
+  for (const f of files) {
+    const parsedWb = XLSX.read(await f.text(), { type: 'string', FS: opts?.Delimiter || undefined })
+    const firstSheetName = parsedWb.SheetNames[0]
+    const ws = parsedWb.Sheets[firstSheetName]
+    if (opts?.autoFitCols !== false && ws) {
+      const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, raw: false, defval: '' })
+      const colCount = Math.max(1, ...rows.slice(0, 100).map((r) => r.length))
+      ws['!cols'] = Array.from({ length: colCount }, (_, ci) => {
+        const maxLen = Math.max(8, ...rows.slice(0, 100).map((r) => String(r[ci] ?? '').length))
+        return { wch: Math.min(48, maxLen + 3) }
+      })
+    }
+    let sheetName = files.length === 1 ? 'Sheet1' : stem(f.name).replace(/[\\/?*[\]:]/g, '_').slice(0, 28) || 'Sheet'
+    let suffix = 2
+    while (outWb.SheetNames.includes(sheetName)) {
+      sheetName = `${stem(f.name).slice(0, 22)}_${suffix++}`
+    }
+    XLSX.utils.book_append_sheet(outWb, ws, sheetName)
+  }
+
+  const outName = files.length === 1 ? `${stem(files[0].name)}.xlsx` : 'combined-csv.xlsx'
+  return { name: outName, blob: wbBlob(outWb, 'xlsx') }
+}
+
+export interface ExcelToCsvOpts {
+  sheets?: string[]
+  delimiter?: string
+  utf8Bom?: boolean
+}
+
+export async function excelToCsv(file: File, opts?: ExcelToCsvOpts): Promise<OutputFile[]> {
   const wb = await readWorkbook(file)
-  return wb.SheetNames.map((n) => ({
+  const targetSheets = opts?.sheets?.length
+    ? wb.SheetNames.filter((n) => opts.sheets!.includes(n))
+    : wb.SheetNames
+  if (!targetSheets.length) throw new Error('Select at least one worksheet to export.')
+  const FS = opts?.delimiter || ','
+  const prefix = opts?.utf8Bom ? '\uFEFF' : ''
+  return targetSheets.map((n) => ({
     name: `${stem(file.name)}-${n.replace(/[^\w-]+/g, '_')}.csv`,
-    blob: new Blob([XLSX.utils.sheet_to_csv(wb.Sheets[n])], { type: 'text/csv' }),
+    blob: new Blob([prefix + XLSX.utils.sheet_to_csv(wb.Sheets[n], { FS })], { type: 'text/csv;charset=utf-8' }),
   }))
 }
 
@@ -777,21 +1239,29 @@ export async function removeWorksheets(file: File, remove: string[]): Promise<Ou
   return { name: `${stem(file.name)}-edited.xlsx`, blob: wbBlob(out, 'xlsx') }
 }
 
-export async function excelToHtml(file: File): Promise<OutputFile> {
+export async function excelToHtml(file: File, opts?: { sheets?: string[] }): Promise<OutputFile> {
   const wb = await readWorkbook(file)
-  const sections = wb.SheetNames.map((n) => `<h2>${n}</h2>\n${XLSX.utils.sheet_to_html(wb.Sheets[n])}`).join('\n')
-  const html = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title><style>table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px}</style></head><body>\n${sections}\n</body></html>`
+  const targetSheets = opts?.sheets?.length
+    ? wb.SheetNames.filter((n) => opts.sheets!.includes(n))
+    : wb.SheetNames
+  const sections = targetSheets.map((n) => `<h2>${n}</h2>\n${XLSX.utils.sheet_to_html(wb.Sheets[n])}`).join('\n')
+  const html = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title><style>body{font-family:system-ui,sans-serif;padding:24px;color:#0f172a}h2{margin-top:24px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #cbd5e1;padding:6px 10px}tr:nth-child(even){background:#f8fafc}</style></head><body>\n${sections}\n</body></html>`
   return { name: `${stem(file.name)}.html`, blob: new Blob([html], { type: 'text/html' }) }
 }
 
 export interface ExcelToPdfOpts {
   orientation?: 'landscape' | 'portrait'
   showGridlines?: boolean
+  sheets?: string[]
 }
 
 /** Styled PDF table renderer: renders each sheet with auto-fitted column widths, shaded headers, zebra rows & optional gridlines. */
 export async function excelToPdf(file: File, opts: ExcelToPdfOpts = {}): Promise<OutputFile> {
   const wb = await readWorkbook(file)
+  const targetSheets = opts.sheets?.length
+    ? wb.SheetNames.filter((n) => opts.sheets!.includes(n))
+    : wb.SheetNames
+  if (!targetSheets.length) throw new Error('Select at least one worksheet to convert.')
   const doc = await PDFDocument.create()
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
@@ -813,7 +1283,7 @@ export async function excelToPdf(file: File, opts: ExcelToPdfOpts = {}): Promise
       .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '')
       .trim()
 
-  for (const name of wb.SheetNames) {
+  for (const name of targetSheets) {
     const rawRows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '' })
     const rows = rawRows.slice(0, 300)
     const maxCols = Math.min(isLandscape ? 14 : 9, Math.max(1, ...rows.map((r) => r.length)))

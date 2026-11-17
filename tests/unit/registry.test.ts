@@ -38,4 +38,10 @@ describe('tool registry integrity', () => {
     expect(IMPLEMENTED_IDS.has('docx-page-remover')).toBe(true)
     expect(IMPLEMENTED_IDS.has('remove-word-pages')).toBe(true)
   })
+
+  it('every registered tool is live in browser', () => {
+    for (const t of TOOLS) {
+      expect(IMPLEMENTED_IDS.has(t.id), t.id).toBe(true)
+    }
+  })
 })

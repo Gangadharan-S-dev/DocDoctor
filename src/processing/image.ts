@@ -179,8 +179,30 @@ export async function resizeImage(
   return { name: `${stem(file.name)}-${width}x${height}.${EXT[type]}`, blob }
 }
 
+export async function estimateCompressedSize(file: File, opts: CompressOpts): Promise<number> {
+  const out = await compressImage(file, opts)
+  return out.blob.size
+}
+
 export interface CropOpts {
   circular?: boolean
+  cornerRadius?: number
+}
+
+function clipRoundedRect(ctx: CanvasRenderingContext2D, w: number, h: number, r: number) {
+  const rad = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(rad, 0)
+  ctx.lineTo(w - rad, 0)
+  ctx.quadraticCurveTo(w, 0, w, rad)
+  ctx.lineTo(w, h - rad)
+  ctx.quadraticCurveTo(w, h, w - rad, h)
+  ctx.lineTo(rad, h)
+  ctx.quadraticCurveTo(0, h, 0, h - rad)
+  ctx.lineTo(0, rad)
+  ctx.quadraticCurveTo(0, 0, rad, 0)
+  ctx.closePath()
+  ctx.clip()
 }
 
 export async function cropImage(
@@ -196,16 +218,21 @@ export async function cropImage(
   const sw = (wPct / 100) * bmp.width, sh = (hPct / 100) * bmp.height
   const c = canvas(sw, sh)
   const ctx = c.getContext('2d')!
+  const hasRounded = !opts?.circular && (opts?.cornerRadius ?? 0) > 0
 
   if (opts?.circular) {
     ctx.beginPath()
     ctx.arc(c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2, 0, Math.PI * 2)
     ctx.clip()
+  } else if (hasRounded) {
+    const rPx = ((opts?.cornerRadius ?? 0) / 100) * Math.min(c.width, c.height)
+    clipRoundedRect(ctx, c.width, c.height, rPx)
   }
 
   ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height)
   bmp.close()
-  const type: ImgFormat = opts?.circular ? 'image/png' : (file.type === 'image/png' ? 'image/png' : 'image/jpeg')
+  const needsAlpha = Boolean(opts?.circular || hasRounded)
+  const type: ImgFormat = needsAlpha ? 'image/png' : (file.type === 'image/png' ? 'image/png' : 'image/jpeg')
   const blob = await encode(type === 'image/jpeg' ? flatten(c) : c, type, 0.92)
   return { name: `${stem(file.name)}-cropped.${EXT[type]}`, blob }
 }
