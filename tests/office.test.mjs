@@ -208,5 +208,32 @@ check('fileMetadata computes SHA-1/256/512 and detects office kind', Boolean(dee
 const scrubbedDocx = await TXT.scrubFileMetadata(docxA)
 check('scrubFileMetadata produces valid sanitized DOCX', scrubbedDocx.blob.size > 0 && scrubbedDocx.name.endsWith('-sanitized.docx'))
 
+// Round 2 upgrades: Word stats, Markdown export, HTML themes, Merge separators, ZIP folders, XML/HTML tools
+const stats = OFF.analyzeTextStats('Hello world.\n\nSecond paragraph with five words.')
+check('analyzeTextStats counts words, paragraphs, and reading time', stats.words === 7 && stats.paragraphs === 2 && stats.readingTimeMin === 1)
+const mdWordTxt = await (await OFF.wordToText(docxA, { markdownFormatting: true, collapseBlankLines: true })).blob.text()
+check('wordToText markdownFormatting prefixes headings with #', mdWordTxt.includes('# Alpha Doc'))
+const darkWordHtml = await (await OFF.wordToHtml(docxA, { mode: 'dark' })).blob.text()
+const cleanWordHtml = await (await OFF.wordToHtml(docxA, { mode: 'clean' })).blob.text()
+check('wordToHtml supports dark theme and clean mode', darkWordHtml.includes('#0f172a') && !cleanWordHtml.includes('<style>'))
+const mergedHeadingDocx = await OFF.mergeWord([docxA, docxB], { separator: 'filename-heading' })
+const mergedHeadingTxt = await (await OFF.wordToText(asFile(mergedHeadingDocx.blob, 'mh.docx', OFF.DOCX_TYPE))).blob.text()
+check('mergeWord filename-heading inserts document titles', mergedHeadingTxt.includes('AlphaDoc') && mergedHeadingTxt.includes('BetaDoc'))
+
+const groupedZip = await TXT.createZip([csvFile, asFile(new Blob(['hello']), 'readme.txt', 'text/plain')], { rootFolder: 'backup', groupByType: true })
+const groupedEntries = await TXT.listZipEntries(asFile(groupedZip.blob, 'g.zip', 'application/zip'))
+check('createZip supports rootFolder and groupByType subfolders', groupedEntries.entries.some((e) => e.name === 'backup/spreadsheets/data.csv') && groupedEntries.entries.some((e) => e.name === 'backup/documents/readme.txt'))
+
+check('jsonToXml supports custom rootTag and itemTag', TXT.jsonToXml('[{"id":1}]', { rootTag: 'catalog', itemTag: 'product' }).includes('<catalog>\n  <product>\n    <id>1</id>'))
+check('formatXml supports minify and xmlToJson converts XML to JSON', () => {
+  const minXml = TXT.formatXml('<root>\n  <a>1</a>\n</root>', { minify: true })
+  const xmlJson = JSON.parse(TXT.xmlToJson('<root><user id="7"><name>Ada</name></user></root>'))
+  return minXml === '<root><a>1</a></root>' && xmlJson.root.user['@id'] === '7' && xmlJson.root.user.name === 'Ada'
+})
+
+const htmlFile = asFile(new Blob(['<h1>Title</h1><p>Visit <a href="https://example.com">Example</a></p>'], { type: 'text/html' }), 'page.html', 'text/html')
+const extractedHtmlTxt = await (await TXT.htmlToText(htmlFile, { preserveLinks: true, preserveHeadings: true })).blob.text()
+check('htmlToText preserves headings and inline link URLs', extractedHtmlTxt.includes('# Title') && extractedHtmlTxt.includes('Example (https://example.com)'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

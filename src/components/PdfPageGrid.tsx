@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { RotateCw, Trash2, ArrowLeft, ArrowRight, Loader2, GripVertical, Eye, X, Undo2 } from 'lucide-react'
+import { RotateCw, Trash2, ArrowLeft, ArrowRight, Loader2, GripVertical, Eye, X, Undo2, ArrowUpDown, Plus, CopyPlus } from 'lucide-react'
 import { renderThumbnails, type PageOp } from '../processing/pdf'
 
-/** Visual page picker. mode 'select': toggle pages. mode 'organize': reorder/rotate/delete with drag-and-drop. */
+/** Visual page picker. mode 'select': toggle pages. mode 'organize': reorder/rotate/delete/duplicate/insert-blank with drag-and-drop. */
 export default function PdfPageGrid({ file, mode, onChange }: {
   file: File
   mode: 'select' | 'organize'
@@ -15,6 +15,7 @@ export default function PdfPageGrid({ file, mode, onChange }: {
   const [dropTarget, setDropTarget] = useState<number | null>(null)
   const [density, setDensity] = useState<'compact' | 'standard' | 'large'>('standard')
   const [inspectIdx, setInspectIdx] = useState<number | null>(null)
+  const [rangeText, setRangeText] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -31,8 +32,8 @@ export default function PdfPageGrid({ file, mode, onChange }: {
   const loading = loaded.file !== file || (thumbs.length === 0 && !error)
   const selected = selState.file === file ? selState.sel : new Set<number>()
   const setSelected = (next: Set<number>) => setSelState({ file, sel: next })
-  const defaultOps = thumbs.map((_, i) => ({ index: i, rotation: 0, deleted: false }))
-  const ops = opsState.file === file && opsState.ops.length === thumbs.length ? opsState.ops : defaultOps
+  const defaultOps: PageOp[] = thumbs.map((_, i) => ({ index: i, rotation: 0, deleted: false }))
+  const ops = opsState.file === file && opsState.ops.length > 0 ? opsState.ops : defaultOps
   const setOps = (fn: (o: PageOp[]) => PageOp[]) => setOpsState({ file, ops: fn(ops) })
 
   useEffect(() => { if (mode === 'select') onChange([...selected].sort((a, b) => a - b)) }, [selected, mode]) // eslint-disable-line
@@ -49,8 +50,38 @@ export default function PdfPageGrid({ file, mode, onChange }: {
     }
     setSelected(next)
   }
+  const applyRangeSelection = (input: string) => {
+    setRangeText(input)
+    const next = new Set<number>()
+    for (const part of input.split(',').map((s) => s.trim()).filter(Boolean)) {
+      const m = part.match(/^(\d+)\s*-\s*(\d+)$/)
+      if (m) {
+        let a = parseInt(m[1]), b = parseInt(m[2])
+        if (a > b) [a, b] = [b, a]
+        for (let p = a; p <= b; p++) if (p >= 1 && p <= thumbs.length) next.add(p - 1)
+      } else if (/^\d+$/.test(part)) {
+        const p = parseInt(part)
+        if (p >= 1 && p <= thumbs.length) next.add(p - 1)
+      }
+    }
+    setSelected(next)
+  }
+
   const move = (pos: number, dir: -1 | 1) => setOps((o) => { const n = [...o]; const t = pos + dir; if (t < 0 || t >= n.length) return o; [n[pos], n[t]] = [n[t], n[pos]]; return n })
   const rotateAll = () => setOps((o) => o.map((op) => ({ ...op, rotation: (op.rotation + 90) % 360 })))
+  const reverseOrder = () => setOps((o) => [...o].reverse())
+  const insertBlankPage = (afterPos?: number) => setOps((o) => {
+    const blank: PageOp = { index: -1, rotation: 0, deleted: false, isBlank: true }
+    if (afterPos === undefined) return [...o, blank]
+    const next = [...o]
+    next.splice(afterPos + 1, 0, blank)
+    return next
+  })
+  const duplicatePage = (pos: number) => setOps((o) => {
+    const next = [...o]
+    next.splice(pos + 1, 0, { ...o[pos] })
+    return next
+  })
   const resetAll = () => setOps(() => thumbs.map((_, i) => ({ index: i, rotation: 0, deleted: false })))
 
   const handleDragStart = (e: React.DragEvent, idx: number) => {
@@ -101,17 +132,42 @@ export default function PdfPageGrid({ file, mode, onChange }: {
 
         <div className="flex flex-wrap items-center gap-2">
           {mode === 'select' && thumbs.length > 0 && (
-            <div className="flex items-center gap-2 text-xs font-bold">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+              <input
+                type="text"
+                value={rangeText}
+                onChange={(e) => applyRangeSelection(e.target.value)}
+                placeholder="Range e.g. 1-3, 5"
+                className="input !py-1 !px-2.5 w-36 text-xs font-mono"
+              />
+              <button type="button" className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50" onClick={() => setSelected(new Set(thumbs.map((_, i) => i).filter((i) => (i + 1) % 2 === 1)))}>Odd</button>
+              <button type="button" className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50" onClick={() => setSelected(new Set(thumbs.map((_, i) => i).filter((i) => (i + 1) % 2 === 0)))}>Even</button>
               <button type="button" className="text-accent hover:underline" onClick={() => setSelected(new Set(thumbs.map((_, i) => i)))}>Select all</button>
               <span className="text-slate-300">|</span>
               <button type="button" className="text-accent hover:underline" onClick={invertSelection}>Invert</button>
               <span className="text-slate-300">|</span>
-              <button type="button" className="text-accent hover:underline" onClick={() => setSelected(new Set())}>Clear</button>
+              <button type="button" className="text-accent hover:underline" onClick={() => { setSelected(new Set()); setRangeText('') }}>Clear</button>
             </div>
           )}
 
           {mode === 'organize' && thumbs.length > 0 && (
-            <div className="flex items-center gap-1.5 text-xs font-bold">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+              <button
+                type="button"
+                onClick={reverseOrder}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                title="Reverse the order of all pages"
+              >
+                <ArrowUpDown className="h-3 w-3 text-accent" /> Reverse order
+              </button>
+              <button
+                type="button"
+                onClick={() => insertBlankPage()}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50 shadow-sm"
+                title="Append a blank page that you can drag anywhere"
+              >
+                <Plus className="h-3 w-3 text-accent" /> Blank page
+              </button>
               <button
                 type="button"
                 onClick={rotateAll}
@@ -190,35 +246,48 @@ export default function PdfPageGrid({ file, mode, onChange }: {
                 onClick={() => toggle(pageIdx)}
                 className="block w-full text-left"
                 aria-pressed={isSel}
-                aria-label={`Page ${pageIdx + 1}`}
+                aria-label={op?.isBlank ? 'Blank page' : `Page ${pageIdx + 1}`}
               >
-                <img
-                  src={thumbs[pageIdx]}
-                  alt={`Page ${pageIdx + 1}`}
-                  className="aspect-[3/4] w-full object-cover object-top"
-                  style={mode === 'organize' && op ? { transform: `rotate(${op.rotation}deg)` } : undefined}
-                />
+                {op?.isBlank ? (
+                  <div
+                    className="flex aspect-[3/4] w-full flex-col items-center justify-center bg-slate-50 text-xs font-bold text-slate-400"
+                    style={op ? { transform: `rotate(${op.rotation}deg)` } : undefined}
+                  >
+                    <span>Blank Page</span>
+                    {op.rotation > 0 && <span className="text-[10px]">({op.rotation}°)</span>}
+                  </div>
+                ) : (
+                  <img
+                    src={thumbs[pageIdx]}
+                    alt={`Page ${pageIdx + 1}`}
+                    className="aspect-[3/4] w-full object-cover object-top"
+                    style={mode === 'organize' && op ? { transform: `rotate(${op.rotation}deg)` } : undefined}
+                  />
+                )}
               </button>
 
               {/* Inspect button overlay */}
-              <button
-                type="button"
-                aria-label={`Inspect page ${pageIdx + 1}`}
-                onClick={(e) => { e.stopPropagation(); setInspectIdx(pageIdx) }}
-                className="absolute right-1.5 top-1.5 hidden rounded-md bg-white/90 p-1 text-slate-600 shadow backdrop-blur group-hover:block hover:bg-white hover:text-ink-950"
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </button>
+              {!op?.isBlank && (
+                <button
+                  type="button"
+                  aria-label={`Inspect page ${pageIdx + 1}`}
+                  onClick={(e) => { e.stopPropagation(); setInspectIdx(pageIdx) }}
+                  className="absolute right-1.5 top-1.5 hidden rounded-md bg-white/90 p-1 text-slate-600 shadow backdrop-blur group-hover:block hover:bg-white hover:text-ink-950"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </button>
+              )}
 
               <figcaption className="flex items-center justify-between px-2 py-1.5 text-[11px] font-bold text-slate-500">
-                <span className="flex items-center gap-1">
-                  {mode === 'organize' && <GripVertical className="h-3 w-3 text-slate-400" />}
-                  Page {pageIdx + 1}
+                <span className="flex items-center gap-1 truncate">
+                  {mode === 'organize' && <GripVertical className="h-3 w-3 shrink-0 text-slate-400" />}
+                  {op?.isBlank ? 'Blank' : `Page ${pageIdx + 1}`}
                 </span>
                 {mode === 'organize' && op && (
                   <span className="flex gap-0.5">
                     <button type="button" aria-label="Move left" className="rounded p-1 hover:bg-slate-100" onClick={() => move(pos, -1)}><ArrowLeft className="h-3.5 w-3.5" /></button>
                     <button type="button" aria-label="Move right" className="rounded p-1 hover:bg-slate-100" onClick={() => move(pos, 1)}><ArrowRight className="h-3.5 w-3.5" /></button>
+                    <button type="button" aria-label="Duplicate page" title="Duplicate page" className="rounded p-1 hover:bg-slate-100" onClick={() => duplicatePage(pos)}><CopyPlus className="h-3.5 w-3.5" /></button>
                     <button type="button" aria-label="Rotate page" className="rounded p-1 hover:bg-slate-100" onClick={() => setOps((o) => o.map((x, i) => i === pos ? { ...x, rotation: (x.rotation + 90) % 360 } : x))}><RotateCw className="h-3.5 w-3.5" /></button>
                     <button type="button" aria-label={deleted ? 'Restore page' : 'Delete page'} className="rounded p-1 hover:bg-red-50 hover:text-red-600" onClick={() => setOps((o) => o.map((x, i) => i === pos ? { ...x, deleted: !x.deleted } : x))}><Trash2 className="h-3.5 w-3.5" /></button>
                   </span>

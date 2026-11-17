@@ -2,7 +2,7 @@ import type { Tool } from '../../data/tools'
 import type { OutputFile } from '../../processing/download'
 import type { ImgFormat } from '../../processing/image'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../../processing/pdf'
-import type { PdfAnnotation, SignPlacement } from '../../processing/advanced'
+import type { PdfAnnotation, PdfEditAnnotationMode, SignPlacement } from '../../processing/advanced'
 import type { CsvAction } from '../../processing/text'
 import type { DocxReplaceRule } from '../../processing/office'
 
@@ -71,12 +71,40 @@ export interface RunSettings {
   pdfY: number
   pdfSize: number
   pdfColor: string
-  pdfEditMode?: 'text' | 'redact' | 'highlight'
+  pdfEditMode?: PdfEditAnnotationMode
   pdfFont?: 'Helvetica' | 'TimesRoman' | 'Courier'
   pdfRedactW?: number
   pdfRedactH?: number
   pdfAnnotations?: PdfAnnotation[]
   pdfDestructiveRedact?: boolean
+  pdfToImgRange?: string
+  pdfToImgGrayscale?: boolean
+  pdfToImgStitch?: boolean
+  pdfExcelMergeSheets?: boolean
+  docPageSize?: 'a4' | 'letter'
+  docOrientation?: 'portrait' | 'landscape'
+  docFontFamily?: 'Helvetica' | 'TimesRoman' | 'Courier'
+  docFontSize?: number
+  docMargin?: 'compact' | 'standard' | 'wide'
+  docIncludePageNumbers?: boolean
+  wordHtmlMode?: 'styled' | 'clean' | 'dark'
+  wordTxtMarkdown?: boolean
+  wordTxtCollapseBlank?: boolean
+  mergeWordSeparator?: 'page-break' | 'continuous' | 'filename-heading'
+  imgPdfLayout?: '1-up' | '2-up' | '4-up'
+  imgPdfBgColor?: string
+  imgPdfCaptions?: boolean
+  icoFitMode?: 'pad' | 'cover' | 'stretch'
+  icoExportWebKit?: boolean
+  zipRootFolder?: string
+  zipGroupByType?: boolean
+  xmlRootTag?: string
+  xmlItemTag?: string
+  xmlMinify?: boolean
+  xmlExportJson?: boolean
+  htmlPreserveLinks?: boolean
+  htmlPreserveHeadings?: boolean
+  txtStyledHtml?: boolean
   sigData: string | null
   signPos: 'bottom-right' | 'bottom-left' | 'center' | 'custom'
   sigWidth?: number
@@ -163,11 +191,11 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
   const aborted = () => { if (signal.aborted) throw new DOMException('Processing cancelled.', 'AbortError') }
 
   // Sequential batch helper: reports progress and honors cancellation between files.
-  const batch = async <T,>(items: T[], fn: (item: T) => Promise<OutputFile>): Promise<OutputFile[]> => {
+  const batch = async <T,>(items: T[], fn: (item: T, index: number) => Promise<OutputFile>): Promise<OutputFile[]> => {
     const out: OutputFile[] = []
     for (let i = 0; i < items.length; i++) {
       aborted()
-      out.push(await fn(items[i]))
+      out.push(await fn(items[i], i))
       onProgress(i + 1, items.length)
     }
     return out
@@ -220,8 +248,14 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         pageSize: s.pageSize,
         margin: s.imgPdfMargin,
         orientation: s.imgPdfOrientation,
+        layout: s.imgPdfLayout,
+        bgColor: s.imgPdfBgColor,
+        addCaptions: s.imgPdfCaptions,
       })]
-      case 'ico-converter': return batch(fs, (f) => IMG.imageToIco(f, s.icoSizes?.length ? s.icoSizes : [16, 24, 32, 48, 64]))
+      case 'ico-converter': return batch(fs, (f) => IMG.imageToIco(f, s.icoSizes?.length ? s.icoSizes : [16, 24, 32, 48, 64], {
+        fitMode: s.icoFitMode,
+        exportWebKit: s.icoExportWebKit,
+      }))
     }
   }
   if (PDF_IDS.has(id)) {
@@ -280,8 +314,18 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
           }
         ))
       }
-      case 'pdf-to-jpg': case 'pdf-to-image': return PDF.pdfToImages(f0, 'image/jpeg', s.scale, proc)
-      case 'pdf-to-png': return PDF.pdfToImages(f0, 'image/png', s.scale, proc)
+      case 'pdf-to-jpg': case 'pdf-to-image': return PDF.pdfToImages(f0, 'image/jpeg', s.scale, {
+        ...proc,
+        pageRange: s.pdfToImgRange,
+        grayscale: s.pdfToImgGrayscale,
+        stitchVertical: s.pdfToImgStitch,
+      })
+      case 'pdf-to-png': return PDF.pdfToImages(f0, 'image/png', s.scale, {
+        ...proc,
+        pageRange: s.pdfToImgRange,
+        grayscale: s.pdfToImgGrayscale,
+        stitchVertical: s.pdfToImgStitch,
+      })
       case 'compare-pdf': return PDF.comparePdfs(fs, { ...proc, highlightPixelDiff: s.comparePixelDiff })
     }
   }
@@ -292,10 +336,13 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       maxEdge: s.officeMediaMaxEdge,
     }
     switch (id) {
-      case 'word-to-txt': case 'extract-word-text': return batch(fs, (f) => OFF.wordToText(f))
-      case 'word-to-html': return batch(fs, (f) => OFF.wordToHtml(f))
+      case 'word-to-txt': case 'extract-word-text': return batch(fs, (f) => OFF.wordToText(f, {
+        markdownFormatting: s.wordTxtMarkdown,
+        collapseBlankLines: s.wordTxtCollapseBlank,
+      }))
+      case 'word-to-html': return batch(fs, (f) => OFF.wordToHtml(f, { mode: s.wordHtmlMode }))
       case 'compress-docx': return batch(fs, (f) => OFF.recompressPackage(f, `${f.name.replace(/\.docx$/i, '')}-compressed.docx`, OFF.DOCX_TYPE, mediaOpts))
-      case 'merge-word': return [await OFF.mergeWord(fs)]
+      case 'merge-word': return [await OFF.mergeWord(fs, { separator: s.mergeWordSeparator })]
       case 'split-word': return OFF.splitWord(f0, s.splitMode)
       case 'edit-word': {
         if (s.wordEditMode === 'replace') {
@@ -347,13 +394,22 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         level: s.zipLevel,
         password: s.zipPassword,
         archiveName: s.zipArchiveName,
+        rootFolder: s.zipRootFolder,
+        groupByType: s.zipGroupByType,
       })]
       case 'extract-zip': return TXT.extractZip(f0, {
         password: s.zipPassword,
         filterNames: s.zipFilterNames,
       })
-      case 'html-to-txt': return batch(fs, (f) => TXT.htmlToText(f))
-      case 'txt-converter': case 'markdown-converter': return batch(fs, (f) => TXT.convertText(f, s.txtTo))
+      case 'html-to-txt': return batch(fs, (f, idx) => TXT.htmlToText(f, {
+        preserveLinks: s.htmlPreserveLinks,
+        preserveHeadings: s.htmlPreserveHeadings,
+        editedText: idx === 0 && s.editText?.trim() ? s.editText : undefined,
+      }))
+      case 'txt-converter': case 'markdown-converter': return batch(fs, (f, idx) => TXT.convertText(f, s.txtTo, {
+        styledHtml: s.txtStyledHtml,
+        editedText: idx === 0 && s.editText?.trim() ? s.editText : undefined,
+      }))
       case 'json-formatter': {
         const rawText = s.editText?.trim() ? s.editText : await f0.text()
         if (s.jsonExportCsv) {
@@ -369,11 +425,20 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       }
       case 'json-to-xml': {
         const rawText = s.editText?.trim() ? s.editText : await f0.text()
-        return [{ name: `${f0.name.replace(/\.json$/i, '')}.xml`, blob: new Blob([TXT.jsonToXml(rawText)], { type: 'application/xml' }) }]
+        return [{
+          name: `${f0.name.replace(/\.json$/i, '')}.xml`,
+          blob: new Blob([TXT.jsonToXml(rawText, { rootTag: s.xmlRootTag, itemTag: s.xmlItemTag })], { type: 'application/xml' }),
+        }]
       }
       case 'xml-formatter': {
         const rawText = s.editText?.trim() ? s.editText : await f0.text()
-        return [{ name: f0.name, blob: new Blob([TXT.formatXml(rawText)], { type: 'application/xml' }) }]
+        if (s.xmlExportJson) {
+          return [{ name: `${f0.name.replace(/\.xml$/i, '')}.json`, blob: new Blob([TXT.xmlToJson(rawText, s.jsonIndent ?? 2)], { type: 'application/json' }) }]
+        }
+        return [{
+          name: f0.name,
+          blob: new Blob([TXT.formatXml(rawText, { minify: s.xmlMinify, indent: s.jsonIndent ?? 2 })], { type: 'application/xml' }),
+        }]
       }
       case 'csv-tools': return [{ name: f0.name, blob: new Blob([TXT.csvTools(await f0.text(), s.csvAction, s.csvDelim || ',', {
         outDelimiter: s.csvOutDelim || s.csvDelim || ',',
@@ -390,8 +455,17 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
   }
   if (ADVANCED_IDS.has(id)) {
     const ADV = await import('../../processing/advanced')
+    const docLayout = {
+      pageSize: s.docPageSize,
+      orientation: s.docOrientation,
+      fontFamily: s.docFontFamily,
+      fontSize: s.docFontSize,
+      margin: s.docMargin,
+      includePageNumbers: s.docIncludePageNumbers,
+    }
     switch (id) {
       case 'edit-pdf': return [await ADV.editPdfAddText(f0, s.pdfText, s.pdfPage, s.pdfX, s.pdfY, s.pdfSize, s.pdfColor, {
+        mode: s.pdfEditMode,
         isRedact: s.pdfEditMode === 'redact',
         isHighlight: s.pdfEditMode === 'highlight',
         fontFamily: s.pdfFont,
@@ -412,10 +486,10 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       }
       case 'repair-pdf': return batch(fs, (f) => ADV.repairPdf(f))
       case 'pdf-to-word': case 'pdf-to-docx': return [await ADV.pdfToDocx(f0)]
-      case 'pdf-to-excel': return [await ADV.pdfToExcel(f0)]
+      case 'pdf-to-excel': return [await ADV.pdfToExcel(f0, { mergeSheets: s.pdfExcelMergeSheets })]
       case 'pdf-to-powerpoint': case 'pdf-to-pptx': return [await ADV.pdfToPowerpoint(f0, s.scale, { mode: s.pptxMode })]
-      case 'word-to-pdf': case 'docx-to-pdf': return [await ADV.docxToPdf(f0)]
-      case 'epub-to-pdf': return [await ADV.epubToPdf(f0)]
+      case 'word-to-pdf': case 'docx-to-pdf': return [await ADV.docxToPdf(f0, docLayout)]
+      case 'epub-to-pdf': return [await ADV.epubToPdf(f0, docLayout)]
     }
   }
   if (CRYPTO_IDS.has(id)) {

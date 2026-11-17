@@ -89,5 +89,14 @@ await check('watermarkPdf supports tiled text and image watermark', async () => 
   const imgWm = await PDF.watermarkPdf(a, '', 0.5, 36, { position: 'bottom-right', imageBytes: png1x1, imageMime: 'image/png', imageScale: 0.2 })
   return (await pages(tiled)) === 3 && (await pages(imgWm)) === 3
 })
+await check('organizePdf supports inserting blank pages and duplicating pages', async () => {
+  const out = await PDF.organizePdf(a, [
+    { index: 0, rotation: 0, deleted: false },
+    { index: -1, rotation: 0, deleted: false, isBlank: true },
+    { index: 0, rotation: 0, deleted: false },
+  ])
+  const d = await PDFDocument.load(await out.blob.arrayBuffer())
+  return d.getPageCount() === 3
+})
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

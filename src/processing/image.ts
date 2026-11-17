@@ -1,4 +1,5 @@
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import JSZip from 'jszip'
 import type { OutputFile } from './download'
 import { stem } from './download'
 
@@ -395,6 +396,9 @@ export interface ImagesToPdfOpts {
   pageSize?: 'fit' | 'a4' | 'letter'
   margin?: 'none' | 'compact' | 'standard'
   orientation?: 'auto' | 'portrait' | 'landscape'
+  layout?: '1-up' | '2-up' | '4-up'
+  bgColor?: string
+  addCaptions?: boolean
 }
 
 export async function imagesToPdf(
@@ -405,45 +409,128 @@ export async function imagesToPdf(
   const doc = await PDFDocument.create()
   const effectivePageSize = opts?.pageSize || pageSize
   const marginSize = opts?.margin === 'compact' ? 18 : opts?.margin === 'none' ? 0 : 36
+  const layout = opts?.layout ?? '1-up'
+  const captionFont = opts?.addCaptions ? await doc.embedFont(StandardFonts.Helvetica) : null
+  const hexBg = (opts?.bgColor || '#ffffff').replace('#', '').padEnd(6, 'f')
+  const bgRgb = rgb(
+    parseInt(hexBg.slice(0, 2), 16) / 255,
+    parseInt(hexBg.slice(2, 4), 16) / 255,
+    parseInt(hexBg.slice(4, 6), 16) / 255,
+  )
+  const hasCustomBg = Boolean(opts?.bgColor && opts.bgColor.toLowerCase() !== '#ffffff')
 
-  for (const f of files) {
+  const embedOne = async (f: File) => {
     const bytes = new Uint8Array(await f.arrayBuffer())
     const isPng = f.type === 'image/png'
-    const img = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes).catch(async () => {
+    return isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes).catch(async () => {
       const bmp = await loadBitmap(f)
       const { c } = drawBase(bmp, bmp.width, bmp.height)
       bmp.close()
       const png = await encode(c, 'image/png', 1)
       return doc.embedPng(new Uint8Array(await png.arrayBuffer()))
     })
+  }
 
-    if (effectivePageSize === 'fit') {
-      const page = doc.addPage([img.width * 0.75, img.height * 0.75])
-      page.drawImage(img, { x: 0, y: 0, width: img.width * 0.75, height: img.height * 0.75 })
-    } else {
-      let pageW = effectivePageSize === 'letter' ? 612 : 595.28
-      let pageH = effectivePageSize === 'letter' ? 792 : 841.89
+  if (layout === '2-up' || layout === '4-up') {
+    const perPage = layout === '4-up' ? 4 : 2
+    const baseW = effectivePageSize === 'letter' ? 612 : 595.28
+    const baseH = effectivePageSize === 'letter' ? 792 : 841.89
+    const isLandscape = opts?.orientation === 'landscape'
+    const pageW = isLandscape ? baseH : baseW
+    const pageH = isLandscape ? baseW : baseH
+    const pad = Math.max(18, marginSize)
+    const gap = 16
+    const cols = layout === '4-up' ? 2 : (isLandscape ? 2 : 1)
+    const rows = layout === '4-up' ? 2 : (isLandscape ? 1 : 2)
+    const cellW = (pageW - pad * 2 - gap * (cols - 1)) / cols
+    const cellH = (pageH - pad * 2 - gap * (rows - 1)) / rows
 
-      const isImgLandscape = img.width > img.height
-      const forceOrientation = opts?.orientation || 'auto'
-      if (forceOrientation === 'landscape' || (forceOrientation === 'auto' && isImgLandscape)) {
-        const tmp = pageW
-        pageW = pageH
-        pageH = tmp
-      }
-
+    for (let i = 0; i < files.length; i += perPage) {
       const page = doc.addPage([pageW, pageH])
-      const availW = pageW - marginSize * 2
-      const availH = pageH - marginSize * 2
-      const s = Math.min(availW / img.width, availH / img.height)
-      const drawW = img.width * s
-      const drawH = img.height * s
-      page.drawImage(img, {
-        x: (pageW - drawW) / 2,
-        y: (pageH - drawH) / 2,
-        width: drawW,
-        height: drawH,
-      })
+      if (hasCustomBg) {
+        page.drawRectangle({ x: 0, y: 0, width: pageW, height: pageH, color: bgRgb })
+      }
+      const chunk = files.slice(i, i + perPage)
+      for (let j = 0; j < chunk.length; j++) {
+        const img = await embedOne(chunk[j])
+        const colIdx = j % cols
+        const rowIdx = Math.floor(j / cols)
+        const cellX = pad + colIdx * (cellW + gap)
+        const cellTopY = pageH - pad - rowIdx * (cellH + gap)
+        const capH = captionFont ? 14 : 0
+        const availH = Math.max(20, cellH - capH)
+        const s = Math.min(cellW / img.width, availH / img.height)
+        const drawW = img.width * s
+        const drawH = img.height * s
+        const dx = cellX + (cellW - drawW) / 2
+        const dy = cellTopY - cellH + capH + (availH - drawH) / 2
+        page.drawImage(img, { x: dx, y: dy, width: drawW, height: drawH })
+        if (captionFont) {
+          const label = stem(chunk[j].name).replace(/[^\x20-\x7E]/g, '').slice(0, 36) || `Image ${i + j + 1}`
+          const lw = captionFont.widthOfTextAtSize(label, 8.5)
+          page.drawText(label, {
+            x: cellX + Math.max(0, (cellW - lw) / 2),
+            y: cellTopY - cellH + 2,
+            size: 8.5,
+            font: captionFont,
+            color: rgb(0.35, 0.4, 0.48),
+          })
+        }
+      }
+    }
+  } else {
+    for (let idx = 0; idx < files.length; idx++) {
+      const f = files[idx]
+      const img = await embedOne(f)
+
+      if (effectivePageSize === 'fit') {
+        const pw = img.width * 0.75
+        const ph = img.height * 0.75 + (captionFont ? 20 : 0)
+        const page = doc.addPage([pw, ph])
+        if (hasCustomBg) page.drawRectangle({ x: 0, y: 0, width: pw, height: ph, color: bgRgb })
+        page.drawImage(img, { x: 0, y: captionFont ? 20 : 0, width: img.width * 0.75, height: img.height * 0.75 })
+        if (captionFont) {
+          const label = `${idx + 1}. ${stem(f.name).replace(/[^\x20-\x7E]/g, '').slice(0, 48)}`
+          page.drawText(label, { x: 12, y: 6, size: 9, font: captionFont, color: rgb(0.35, 0.4, 0.48) })
+        }
+      } else {
+        let pageW = effectivePageSize === 'letter' ? 612 : 595.28
+        let pageH = effectivePageSize === 'letter' ? 792 : 841.89
+
+        const isImgLandscape = img.width > img.height
+        const forceOrientation = opts?.orientation || 'auto'
+        if (forceOrientation === 'landscape' || (forceOrientation === 'auto' && isImgLandscape)) {
+          const tmp = pageW
+          pageW = pageH
+          pageH = tmp
+        }
+
+        const page = doc.addPage([pageW, pageH])
+        if (hasCustomBg) page.drawRectangle({ x: 0, y: 0, width: pageW, height: pageH, color: bgRgb })
+        const capH = captionFont ? 18 : 0
+        const availW = pageW - marginSize * 2
+        const availH = pageH - marginSize * 2 - capH
+        const s = Math.min(availW / img.width, availH / img.height)
+        const drawW = img.width * s
+        const drawH = img.height * s
+        page.drawImage(img, {
+          x: (pageW - drawW) / 2,
+          y: marginSize + capH + (availH - drawH) / 2,
+          width: drawW,
+          height: drawH,
+        })
+        if (captionFont) {
+          const label = `${idx + 1}. ${stem(f.name).replace(/[^\x20-\x7E]/g, '').slice(0, 50)}`
+          const lw = captionFont.widthOfTextAtSize(label, 9)
+          page.drawText(label, {
+            x: Math.max(marginSize, (pageW - lw) / 2),
+            y: Math.max(10, marginSize / 2 + 2),
+            size: 9,
+            font: captionFont,
+            color: rgb(0.35, 0.4, 0.48),
+          })
+        }
+      }
     }
   }
   const bytes = await doc.save()
@@ -453,16 +540,49 @@ export async function imagesToPdf(
   }
 }
 
-/** Build a real multi-size ICO (PNG-compressed entries, Vista+ format). */
-export async function imageToIco(file: File, sizes: number[]): Promise<OutputFile> {
+export interface IcoOpts {
+  fitMode?: 'pad' | 'cover' | 'stretch'
+  exportWebKit?: boolean
+}
+
+function drawSquareIcon(bmp: ImageBitmap, size: number, fitMode: 'pad' | 'cover' | 'stretch' = 'pad'): HTMLCanvasElement {
+  const c = canvas(size, size)
+  const ctx = c.getContext('2d')!
+  ctx.clearRect(0, 0, size, size)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+
+  if (fitMode === 'stretch' || bmp.width === bmp.height) {
+    ctx.drawImage(bmp, 0, 0, size, size)
+  } else if (fitMode === 'cover') {
+    const scale = Math.max(size / bmp.width, size / bmp.height)
+    const sw = Math.round(size / scale)
+    const sh = Math.round(size / scale)
+    const sx = Math.round((bmp.width - sw) / 2)
+    const sy = Math.round((bmp.height - sh) / 2)
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, size, size)
+  } else {
+    const scale = Math.min(size / bmp.width, size / bmp.height)
+    const dw = Math.round(bmp.width * scale)
+    const dh = Math.round(bmp.height * scale)
+    const dx = Math.round((size - dw) / 2)
+    const dy = Math.round((size - dh) / 2)
+    ctx.drawImage(bmp, dx, dy, dw, dh)
+  }
+  return c
+}
+
+/** Build a real multi-size ICO (PNG-compressed entries, Vista+ format), or a full Web Favicon Kit ZIP. */
+export async function imageToIco(file: File, sizes: number[], opts?: IcoOpts): Promise<OutputFile> {
   const bmp = await loadBitmap(file)
+  const fitMode = opts?.fitMode ?? 'pad'
   const entries: { size: number; png: Uint8Array }[] = []
   for (const s of sizes) {
-    const { c } = drawBase(bmp, s, s)
+    const c = drawSquareIcon(bmp, s, fitMode)
     const blob = await encode(c, 'image/png', 1)
     entries.push({ size: s, png: new Uint8Array(await blob.arrayBuffer()) })
   }
-  bmp.close()
+
   const header = 6 + entries.length * 16
   const total = header + entries.reduce((n, e) => n + e.png.length, 0)
   const out = new DataView(new ArrayBuffer(total))
@@ -481,6 +601,39 @@ export async function imageToIco(file: File, sizes: number[]): Promise<OutputFil
     new Uint8Array(out.buffer).set(e.png, offset)
     offset += e.png.length
   })
+
+  if (opts?.exportWebKit) {
+    const zip = new JSZip()
+    zip.file('favicon.ico', new Uint8Array(out.buffer))
+    const kitSizes: [string, number][] = [
+      ['favicon-32x32.png', 32],
+      ['apple-touch-icon.png', 180],
+      ['icon-192.png', 192],
+      ['icon-512.png', 512],
+    ]
+    for (const [fname, sz] of kitSizes) {
+      const c = drawSquareIcon(bmp, sz, fitMode)
+      const b = await encode(c, 'image/png', 1)
+      zip.file(fname, new Uint8Array(await b.arrayBuffer()))
+    }
+    bmp.close()
+    zip.file('site.webmanifest', JSON.stringify({
+      name: stem(file.name),
+      short_name: stem(file.name),
+      icons: [
+        { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      ],
+      theme_color: '#ffffff',
+      background_color: '#ffffff',
+      display: 'standalone',
+    }, null, 2))
+    zip.file('head-tags.html', `<!-- Paste inside your <head> -->\n<link rel="icon" href="/favicon.ico" sizes="any">\n<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png">\n<link rel="manifest" href="/site.webmanifest">\n`)
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+    return { name: `${stem(file.name)}-favicon-kit.zip`, blob: zipBlob }
+  }
+
+  bmp.close()
   return { name: `${stem(file.name)}.ico`, blob: new Blob([out.buffer], { type: 'image/x-icon' }) }
 }
 

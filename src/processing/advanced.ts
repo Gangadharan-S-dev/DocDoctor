@@ -69,13 +69,35 @@ function safePdfText(input: string): string {
     .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '')
 }
 
+export interface DocLayoutOpts {
+  pageSize?: 'a4' | 'letter'
+  orientation?: 'portrait' | 'landscape'
+  fontFamily?: 'Helvetica' | 'TimesRoman' | 'Courier'
+  fontSize?: number
+  margin?: 'compact' | 'standard' | 'wide'
+  includePageNumbers?: boolean
+}
+
 /** Render structured blocks (headings, paragraphs, lists, and bordered tables) into a multi-page PDF. */
-export async function blocksToPdf(blocks: StructuredBlock[], title: string): Promise<Blob> {
+export async function blocksToPdf(blocks: StructuredBlock[], title: string, opts?: DocLayoutOpts): Promise<Blob> {
   const doc = await PDFDocument.create()
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
-  const italic = await doc.embedFont(StandardFonts.HelveticaOblique)
-  const W = 595.28, H = 841.89, M = 50
+  const fam = opts?.fontFamily ?? 'Helvetica'
+  const font = await doc.embedFont(
+    fam === 'TimesRoman' ? StandardFonts.TimesRoman : fam === 'Courier' ? StandardFonts.Courier : StandardFonts.Helvetica
+  )
+  const bold = await doc.embedFont(
+    fam === 'TimesRoman' ? StandardFonts.TimesRomanBold : fam === 'Courier' ? StandardFonts.CourierBold : StandardFonts.HelveticaBold
+  )
+  const italic = await doc.embedFont(
+    fam === 'TimesRoman' ? StandardFonts.TimesRomanItalic : fam === 'Courier' ? StandardFonts.CourierOblique : StandardFonts.HelveticaOblique
+  )
+
+  const baseW = opts?.pageSize === 'letter' ? 612 : 595.28
+  const baseH = opts?.pageSize === 'letter' ? 792 : 841.89
+  const W = opts?.orientation === 'landscape' ? baseH : baseW
+  const H = opts?.orientation === 'landscape' ? baseW : baseH
+  const M = opts?.margin === 'compact' ? 36 : opts?.margin === 'wide' ? 68 : 50
+  const bodySize = opts?.fontSize ?? 11
   const contentW = W - M * 2
 
   const wrap = (line: string, f: PDFFont, size: number, maxW = contentW): string[] => {
@@ -99,7 +121,7 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string): Pro
   if (title && (!blocks.length || blocks[0].kind !== 'h1')) {
     const cleanTitle = safePdfText(title)
     if (cleanTitle) {
-      page.drawText(cleanTitle.slice(0, 70), { x: M, y, size: 18, font: bold, color: rgb(0.08, 0.1, 0.18) })
+      page.drawText(cleanTitle.slice(0, 70), { x: M, y, size: bodySize + 7, font: bold, color: rgb(0.08, 0.1, 0.18) })
       y -= 28
     }
   }
@@ -145,10 +167,10 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string): Pro
     const isH2 = b.kind === 'h2'
     const isH3 = b.kind === 'h3'
     const isList = b.kind === 'li'
-    const size = isH1 ? 17 : isH2 ? 14 : isH3 ? 12.5 : 11
+    const size = isH1 ? bodySize + 6 : isH2 ? bodySize + 3 : isH3 ? bodySize + 1.5 : bodySize
     const f = isH1 || isH2 || isH3 || b.bold ? bold : b.italic ? italic : font
     const indent = isList ? 16 : 0
-    const lineStep = isH1 ? 24 : isH2 ? 20 : 16
+    const lineStep = isH1 ? size + 7 : isH2 ? size + 6 : size + 5
 
     if (isH1 || isH2) y -= 6
     const wrapped = wrap(rawText, f, size, contentW - indent)
@@ -165,11 +187,21 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string): Pro
     y -= isH1 || isH2 ? 4 : 3
   }
 
+  if (opts?.includePageNumbers) {
+    const pages = doc.getPages()
+    const total = pages.length
+    pages.forEach((p, idx) => {
+      const label = `Page ${idx + 1} of ${total}`
+      const lw = font.widthOfTextAtSize(label, 9)
+      p.drawText(label, { x: (W - lw) / 2, y: Math.max(14, M / 2 - 4), size: 9, font, color: rgb(0.45, 0.5, 0.58) })
+    })
+  }
+
   return pdfBlob(await doc.save())
 }
 
 // ── Shared: flow plain text (with Markdown headings/lists/tables) into a clean multi-page PDF ──
-export async function textToPdf(text: string, title: string): Promise<Blob> {
+export async function textToPdf(text: string, title: string, opts?: DocLayoutOpts): Promise<Blob> {
   const lines = text.split(/\n/)
   const blocks: StructuredBlock[] = []
   let tableBuf: string[][] = []
@@ -206,13 +238,15 @@ export async function textToPdf(text: string, title: string): Promise<Blob> {
   })
   flushTable()
 
-  return blocksToPdf(blocks.length ? blocks : [{ kind: 'p', text: '' }], '')
+  return blocksToPdf(blocks.length ? blocks : [{ kind: 'p', text: '' }], '', opts)
 }
 
-// ── Edit PDF: stamp multi-annotation queue (text, highlight, redaction) + optional destructive redaction ───
+// ── Edit PDF: stamp multi-annotation queue (text, highlight, redaction, shapes, stamps) + optional destructive redaction ───
+export type PdfEditAnnotationMode = 'text' | 'redact' | 'highlight' | 'rect' | 'circle' | 'line' | 'check' | 'cross'
+
 export interface PdfAnnotation {
   id?: string
-  mode: 'text' | 'redact' | 'highlight'
+  mode: PdfEditAnnotationMode
   text?: string
   pageNum: number
   xPct: number
@@ -228,6 +262,7 @@ export interface EditPdfOptions {
   fontFamily?: 'Helvetica' | 'TimesRoman' | 'Courier'
   isRedact?: boolean
   isHighlight?: boolean
+  mode?: PdfEditAnnotationMode
   redactWidth?: number
   redactHeight?: number
   annotations?: PdfAnnotation[]
@@ -248,10 +283,10 @@ async function applyAnnotationToPage(doc: PDFDocument, page: PDFPage, ann: PdfAn
   const col = parseHexColor(ann.colorHex)
   const x = (ann.xPct / 100) * width
   const y = height - (ann.yPct / 100) * height
+  const rw = ann.width ?? 120
+  const rh = ann.height ?? 24
 
   if (ann.mode === 'redact' || ann.mode === 'highlight') {
-    const rw = ann.width ?? 120
-    const rh = ann.height ?? 24
     page.drawRectangle({
       x: Math.max(0, x - rw / 2),
       y: Math.max(0, y - rh / 2),
@@ -259,6 +294,63 @@ async function applyAnnotationToPage(doc: PDFDocument, page: PDFPage, ann: PdfAn
       height: rh,
       color: col,
       opacity: ann.mode === 'highlight' ? 0.38 : 1,
+    })
+  } else if (ann.mode === 'rect') {
+    page.drawRectangle({
+      x: Math.max(0, x - rw / 2),
+      y: Math.max(0, y - rh / 2),
+      width: rw,
+      height: rh,
+      borderColor: col,
+      borderWidth: 2.5,
+      color: col,
+      opacity: 0.08,
+    })
+  } else if (ann.mode === 'circle') {
+    page.drawEllipse({
+      x,
+      y,
+      xScale: Math.max(6, rw / 2),
+      yScale: Math.max(6, rh / 2),
+      borderColor: col,
+      borderWidth: 2.5,
+      color: col,
+      opacity: 0.08,
+    })
+  } else if (ann.mode === 'line') {
+    page.drawLine({
+      start: { x: Math.max(0, x - rw / 2), y },
+      end: { x: Math.min(width, x + rw / 2), y },
+      thickness: 2.5,
+      color: col,
+    })
+  } else if (ann.mode === 'check') {
+    const s = (ann.size ?? 18) * 0.65
+    page.drawLine({
+      start: { x: x - s * 0.6, y: y + s * 0.1 },
+      end: { x: x - s * 0.1, y: y - s * 0.45 },
+      thickness: 2.8,
+      color: col,
+    })
+    page.drawLine({
+      start: { x: x - s * 0.1, y: y - s * 0.45 },
+      end: { x: x + s * 0.85, y: y + s * 0.65 },
+      thickness: 2.8,
+      color: col,
+    })
+  } else if (ann.mode === 'cross') {
+    const s = (ann.size ?? 18) * 0.55
+    page.drawLine({
+      start: { x: x - s, y: y - s },
+      end: { x: x + s, y: y + s },
+      thickness: 2.8,
+      color: col,
+    })
+    page.drawLine({
+      start: { x: x - s, y: y + s },
+      end: { x: x + s, y: y - s },
+      thickness: 2.8,
+      color: col,
     })
   } else {
     const txt = safePdfText(ann.text ?? '')
@@ -277,10 +369,17 @@ export async function editPdfAddText(
   file: File, text: string, pageNum: number, xPct: number, yPct: number, size: number, colorHex: string,
   opts?: EditPdfOptions,
 ): Promise<OutputFile> {
+  const fallbackMode: PdfEditAnnotationMode = opts?.mode
+    ? opts.mode
+    : opts?.isRedact
+      ? 'redact'
+      : opts?.isHighlight
+        ? 'highlight'
+        : 'text'
   const queue: PdfAnnotation[] = opts?.annotations?.length
     ? opts.annotations
     : [{
-      mode: opts?.isRedact ? 'redact' : opts?.isHighlight ? 'highlight' : 'text',
+      mode: fallbackMode,
       text,
       pageNum,
       xPct,
@@ -409,6 +508,40 @@ export async function signPdf(
   return { name: `${stem(file.name)}-signed.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
+export interface PdfRepairDiagnostic {
+  canOpen: boolean
+  pagesRecovered: number
+  objectsCount: number
+  hasHeader: boolean
+  hasEofMarker: boolean
+  notes: string[]
+}
+
+/** Pre-inspect a PDF file to report structural health, object stream counts, and recoverability. */
+export async function inspectPdfRepair(file: File): Promise<PdfRepairDiagnostic> {
+  const bytes = await file.arrayBuffer()
+  const raw = new Uint8Array(bytes)
+  const headStr = new TextDecoder('latin1').decode(raw.slice(0, 32))
+  const tailStr = new TextDecoder('latin1').decode(raw.slice(Math.max(0, raw.length - 128)))
+  const hasHeader = headStr.includes('%PDF-')
+  const hasEofMarker = tailStr.includes('%%EOF')
+  const notes: string[] = []
+  if (!hasHeader) notes.push('Missing standard %PDF- header signature.')
+  if (!hasEofMarker) notes.push('Missing trailing %%EOF marker (file may have been truncated during download).')
+
+  try {
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false })
+    const objectsCount = doc.context.enumerateIndirectObjects().length
+    const pagesRecovered = doc.getPageCount()
+    notes.push(`Parsed ${objectsCount} indirect PDF objects across ${pagesRecovered} page(s).`)
+    notes.push('Cross-reference table (XRef) and object streams will be rebuilt cleanly.')
+    return { canOpen: true, pagesRecovered, objectsCount, hasHeader, hasEofMarker, notes }
+  } catch {
+    notes.push('Structure is severely damaged or truncated beyond standard XRef rebuild.')
+    return { canOpen: false, pagesRecovered: 0, objectsCount: 0, hasHeader, hasEofMarker, notes }
+  }
+}
+
 // ── Repair PDF: tolerant load + clean rebuild ────────────────────
 export async function repairPdf(file: File): Promise<OutputFile> {
   const bytes = await file.arrayBuffer()
@@ -497,20 +630,35 @@ export async function pdfToDocx(file: File): Promise<OutputFile> {
   return { name: `${stem(file.name)}.docx`, blob: new Blob([blob], { type: DOCX_TYPE }) }
 }
 
-// ── PDF → Excel (X-coordinate column clustering + auto-sized columns) ────────────
-export async function pdfToExcel(file: File): Promise<OutputFile> {
+export interface PdfToExcelOpts {
+  mergeSheets?: boolean
+}
+
+// ── PDF → Excel (X-coordinate column clustering + auto-sized columns + optional single-sheet merge) ────────────
+export async function pdfToExcel(file: File, opts?: PdfToExcelOpts): Promise<OutputFile> {
   const pages = await extractTextPages(await file.arrayBuffer())
   if (!pages.some((p) => p.rows.length)) throw new Error('No selectable text found. Scanned or image-only PDFs need OCR — please use the "OCR PDF to Text" tool to extract text or tables.')
   const wb = XLSX.utils.book_new()
+
+  const applyColWidths = (ws: XLSX.WorkSheet, rows: string[][]) => {
+    const colCount = Math.max(1, ...rows.map((r) => r.length))
+    ws['!cols'] = Array.from({ length: colCount }, (_, ci) => {
+      const maxLen = Math.max(8, ...rows.slice(0, 150).map((r) => String(r[ci] ?? '').length))
+      return { wch: Math.min(48, maxLen + 3) }
+    })
+  }
+
+  if (opts?.mergeSheets) {
+    const allRows = pages.flatMap((p) => p.rows)
+    const wsAll = XLSX.utils.aoa_to_sheet(allRows.length ? allRows : [['(no text)']])
+    applyColWidths(wsAll, allRows)
+    XLSX.utils.book_append_sheet(wb, wsAll, 'All Pages')
+  }
+
   pages.forEach((p, i) => {
     const rows = p.rows.length ? p.rows : [['(no text on this page)']]
     const ws = XLSX.utils.aoa_to_sheet(rows)
-    // Auto-calculate readable column widths
-    const colCount = Math.max(1, ...rows.map((r) => r.length))
-    ws['!cols'] = Array.from({ length: colCount }, (_, ci) => {
-      const maxLen = Math.max(8, ...rows.map((r) => String(r[ci] ?? '').length))
-      return { wch: Math.min(48, maxLen + 3) }
-    })
+    applyColWidths(ws, rows)
     XLSX.utils.book_append_sheet(wb, ws, `Page ${i + 1}`)
   })
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
@@ -578,24 +726,24 @@ export async function pdfToPowerpoint(
 }
 
 // ── Word → PDF (structured HTML-to-PDF with headings, lists & tables; disclosed in UI) ──
-export async function docxToPdf(file: File): Promise<OutputFile> {
+export async function docxToPdf(file: File, opts?: DocLayoutOpts): Promise<OutputFile> {
   try {
     const htmlOut = await wordToHtml(file)
     const html = await htmlOut.blob.text()
     const blocks = htmlToStructuredBlocks(html)
     if (blocks.length > 0) {
-      return { name: `${stem(file.name)}.pdf`, blob: await blocksToPdf(blocks, stem(file.name)) }
+      return { name: `${stem(file.name)}.pdf`, blob: await blocksToPdf(blocks, stem(file.name), opts) }
     }
   } catch {
     // Fall back to plain text extraction below
   }
   const text = await wordExtractText(file)
   if (!text.trim()) throw new Error('No text could be extracted from this document.')
-  return { name: `${stem(file.name)}.pdf`, blob: await textToPdf(text, stem(file.name)) }
+  return { name: `${stem(file.name)}.pdf`, blob: await textToPdf(text, stem(file.name), opts) }
 }
 
 // ── EPUB → PDF (spine XHTML → structured headings, lists, tables & paragraphs in PDF) ───
-export async function epubToPdf(file: File): Promise<OutputFile> {
+export async function epubToPdf(file: File, opts?: DocLayoutOpts): Promise<OutputFile> {
   const { default: JSZip } = await import('jszip')
   const zip = await JSZip.loadAsync(await file.arrayBuffer())
   let docs: string[] = []
@@ -635,10 +783,10 @@ export async function epubToPdf(file: File): Promise<OutputFile> {
     }
   }
   if (allBlocks.length) {
-    return { name: `${stem(file.name)}.pdf`, blob: await blocksToPdf(allBlocks, stem(file.name)) }
+    return { name: `${stem(file.name)}.pdf`, blob: await blocksToPdf(allBlocks, stem(file.name), opts) }
   }
   if (!parts.length) throw new Error('Chapters contained no extractable text.')
-  return { name: `${stem(file.name)}.pdf`, blob: await textToPdf(parts.join('\n\n'), stem(file.name)) }
+  return { name: `${stem(file.name)}.pdf`, blob: await textToPdf(parts.join('\n\n'), stem(file.name), opts) }
 }
 
 export { degrees }

@@ -373,6 +373,7 @@ export function PagePlacement({
   const [state, setState] = useState<{ file: File; page: number; img: string; done: boolean }>({ file, page, img: '', done: false })
   const [totalPages, setTotalPages] = useState<number | null>(null)
   const [zoom, setZoom] = useState(1)
+  const draggingRef = useRef(false)
 
   // Read total page count
   useEffect(() => {
@@ -450,12 +451,27 @@ export function PagePlacement({
 
       <div className="max-h-[520px] overflow-auto rounded-xl border border-slate-200 bg-slate-100/60 p-4">
         <div
-          role="button" tabIndex={0} aria-label="Click to choose placement position"
+          role="button" tabIndex={0} aria-label="Click or drag to choose placement position"
           style={{ width: `${Math.round(zoom * 100)}%`, maxWidth: zoom === 1 ? '28rem' : 'none', margin: '0 auto' }}
-          className="relative cursor-crosshair overflow-hidden rounded-xl shadow-md ring-1 ring-slate-300 transition-all select-none"
-          onClick={(e) => {
+          className="relative cursor-crosshair touch-none overflow-hidden rounded-xl shadow-md ring-1 ring-slate-300 transition-all select-none"
+          onPointerDown={(e) => {
+            draggingRef.current = true
             const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-            onPick(Math.round(((e.clientX - r.left) / r.width) * 100), Math.round(((e.clientY - r.top) / r.height) * 100))
+            const nx = Math.max(0, Math.min(100, Math.round(((e.clientX - r.left) / r.width) * 100)))
+            const ny = Math.max(0, Math.min(100, Math.round(((e.clientY - r.top) / r.height) * 100)))
+            onPick(nx, ny)
+            ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+          }}
+          onPointerMove={(e) => {
+            if (!draggingRef.current) return
+            const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const nx = Math.max(0, Math.min(100, Math.round(((e.clientX - r.left) / r.width) * 100)))
+            const ny = Math.max(0, Math.min(100, Math.round(((e.clientY - r.top) / r.height) * 100)))
+            onPick(nx, ny)
+          }}
+          onPointerUp={(e) => {
+            draggingRef.current = false
+            try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch { /* ignore */ }
           }}
         >
           <img src={img} alt={`Page ${page} preview`} className="block w-full pointer-events-none" />

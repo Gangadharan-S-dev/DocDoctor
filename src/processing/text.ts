@@ -2,11 +2,24 @@ import JSZip from 'jszip'
 import type { OutputFile } from './download'
 import { stem } from './download'
 
-// ── ZIP (with configurable compression & WebCrypto AES-256-GCM encryption) ──
+// ── ZIP (with configurable compression, folder structure & WebCrypto AES-256-GCM encryption) ──
 export interface ZipCreateOpts {
   level?: number
   password?: string
   archiveName?: string
+  rootFolder?: string
+  groupByType?: boolean
+}
+
+function typeSubfolderFor(fileName: string): string {
+  const ext = (fileName.split('.').pop() ?? '').toLowerCase()
+  if (ext === 'pdf') return 'pdf'
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'svg', 'ico'].includes(ext)) return 'images'
+  if (['doc', 'docx', 'txt', 'md', 'rtf', 'epub'].includes(ext)) return 'documents'
+  if (['xls', 'xlsx', 'csv', 'tsv'].includes(ext)) return 'spreadsheets'
+  if (['ppt', 'pptx'].includes(ext)) return 'presentations'
+  if (['json', 'xml', 'html', 'htm', 'yaml', 'yml'].includes(ext)) return 'data'
+  return 'other'
 }
 
 export interface ZipEntryInfo {
@@ -38,12 +51,18 @@ async function deriveAesKey(password: string, salt: Uint8Array, usage: KeyUsage[
 export async function createZip(files: File[], opts?: ZipCreateOpts): Promise<OutputFile> {
   const zip = new JSZip()
   const seen = new Map<string, number>()
+  const rootPrefix = opts?.rootFolder?.trim()
+    ? opts.rootFolder.trim().replace(/^[\\/]+|[\\/]+$/g, '').replace(/\.\./g, '')
+    : ''
+
   for (const f of files) {
     let name = f.name
     const n = (seen.get(name) ?? 0) + 1
     seen.set(f.name, n)
     if (n > 1) name = `${stem(f.name)} (${n}).${f.name.split('.').pop()}`
-    zip.file(name, f)
+    const sub = opts?.groupByType ? typeSubfolderFor(name) : ''
+    const fullPath = [rootPrefix, sub, name].filter(Boolean).join('/')
+    zip.file(fullPath, f)
   }
   const level = opts?.level ?? 6
   const innerBlob = await zip.generateAsync({
@@ -154,18 +173,50 @@ export async function extractZip(file: File, opts?: ZipExtractOpts): Promise<Out
 }
 
 // ── Text / HTML / Markdown ───────────────────────────────────────
-export async function htmlToText(file: File): Promise<OutputFile> {
-  const doc = new DOMParser().parseFromString(await file.text(), 'text/html')
+export interface HtmlToTextOpts {
+  preserveLinks?: boolean
+  preserveHeadings?: boolean
+  editedText?: string
+}
+
+export async function htmlToText(file: File, opts?: HtmlToTextOpts): Promise<OutputFile> {
+  const raw = opts?.editedText !== undefined ? opts.editedText : await file.text()
+  const doc = new DOMParser().parseFromString(raw, 'text/html')
   doc.querySelectorAll('script,style,noscript').forEach((el) => el.remove())
+
+  if (opts?.preserveLinks) {
+    doc.querySelectorAll('a[href]').forEach((a) => {
+      const href = a.getAttribute('href')?.trim()
+      const label = (a.textContent ?? '').trim()
+      if (href && !href.startsWith('javascript:')) {
+        a.textContent = label ? `${label} (${href})` : href
+      }
+    })
+  }
+  if (opts?.preserveHeadings) {
+    doc.querySelectorAll('h1,h2,h3').forEach((h) => {
+      const level = h.tagName === 'H1' ? '# ' : h.tagName === 'H2' ? '## ' : '### '
+      h.textContent = `\n${level}${(h.textContent ?? '').trim()}\n`
+    })
+    doc.querySelectorAll('li').forEach((li) => {
+      li.textContent = `\n• ${(li.textContent ?? '').trim()}`
+    })
+  }
+
   const text = (doc.body?.innerText ?? doc.body?.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim()
   return { name: `${stem(file.name)}.txt`, blob: new Blob([text], { type: 'text/plain' }) }
 }
 
-export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promise<OutputFile> {
-  const raw = await file.text()
+export interface ConvertTextOpts {
+  styledHtml?: boolean
+  editedText?: string
+}
+
+export async function convertText(file: File, to: 'txt' | 'html' | 'md', opts?: ConvertTextOpts): Promise<OutputFile> {
+  const raw = opts?.editedText !== undefined ? opts.editedText : await file.text()
   const from = file.name.toLowerCase().endsWith('.html') || file.name.toLowerCase().endsWith('.htm') ? 'html'
     : file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.markdown') ? 'md' : 'txt'
-  if (from === to) return { name: file.name, blob: new Blob([raw], { type: 'text/plain' }) }
+  if (from === to && opts?.editedText === undefined) return { name: file.name, blob: new Blob([raw], { type: 'text/plain' }) }
   // Normalize to HTML or plain text first.
   let html: string; let text: string
   if (from === 'html') {
@@ -181,7 +232,12 @@ export async function convertText(file: File, to: 'txt' | 'html' | 'md'): Promis
 
   if (to === 'txt') return { name: `${stem(file.name)}.txt`, blob: new Blob([text], { type: 'text/plain' }) }
   if (to === 'html') {
-    const full = from === 'html' ? raw : `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title></head><body>\n${html}\n</body></html>`
+    const styleBlock = opts?.styledHtml !== false
+      ? `<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.68;color:#1e293b}h1,h2,h3{color:#0f172a;margin-top:1.4em}pre,code{background:#f1f5f9;border-radius:6px;padding:2px 6px;font-family:monospace}pre{padding:14px;overflow-x:auto}blockquote{border-left:4px solid #1d6ff2;margin:1em 0;padding-left:16px;color:#475569}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cbd5e1;padding:8px 12px}</style>`
+      : ''
+    const full = from === 'html' && opts?.editedText === undefined
+      ? raw
+      : `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title>${styleBlock}</head><body>\n${html}\n</body></html>`
     return { name: `${stem(file.name)}.html`, blob: new Blob([full], { type: 'text/html' }) }
   }
   // to markdown
@@ -268,28 +324,82 @@ function jsonNode(key: string, val: unknown, indent: string): string {
   return `${indent}<${tag}>${escXml(String(val))}</${tag}>`
 }
 
-export function jsonToXml(text: string): string {
-  let parsed: unknown
-  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
-  const body = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? Object.entries(parsed as Record<string, unknown>).map(([k, v]) => jsonNode(k, v, '  ')).join('\n')
-    : jsonNode('item', parsed, '  ')
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<root>\n${body}\n</root>`
+export interface JsonToXmlOpts {
+  rootTag?: string
+  itemTag?: string
 }
 
-export function formatXml(text: string): string {
+export function jsonToXml(text: string, opts?: JsonToXmlOpts): string {
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch (e) { throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`, { cause: e }) }
+  const root = validTag(opts?.rootTag?.trim() || 'root')
+  const item = validTag(opts?.itemTag?.trim() || 'item')
+  const body = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? Object.entries(parsed as Record<string, unknown>).map(([k, v]) => jsonNode(k, v, '  ')).join('\n')
+    : jsonNode(item, parsed, '  ')
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<${root}>\n${body}\n</${root}>`
+}
+
+export interface FormatXmlOpts {
+  minify?: boolean
+  indent?: number | 'tab'
+}
+
+export function formatXml(text: string, opts?: FormatXmlOpts): string {
   const doc = new DOMParser().parseFromString(text, 'application/xml')
   const err = doc.querySelector('parsererror')
   if (err) throw new Error(`Invalid XML: ${err.textContent?.split('\n')[0] ?? 'parse error'}`)
-  // Pretty-print by re-indenting element lines.
   const compact = text.replace(/>\s+</g, '><').trim()
+  if (opts?.minify) return compact
+  const stepUnit = opts?.indent === 'tab' ? '\t' : ' '.repeat(Number(opts?.indent) || 2)
   let indent = 0
   return compact.split(/(?=<)/).filter(Boolean).map((chunk) => {
     if (/^<\//.test(chunk)) indent = Math.max(0, indent - 1)
-    const line = '  '.repeat(indent) + chunk
+    const line = stepUnit.repeat(indent) + chunk
     if (/^<[^!?/][^>]*[^/]>$/.test(chunk) && !/^<[^>]*>.*<\//.test(chunk)) indent++
     return line
   }).join('\n')
+}
+
+function xmlElementToObj(el: Element): unknown {
+  const children = Array.from(el.children)
+  const attrs = Array.from(el.attributes)
+  if (children.length === 0 && attrs.length === 0) {
+    const raw = (el.textContent ?? '').trim()
+    if (raw === 'true') return true
+    if (raw === 'false') return false
+    if (raw !== '' && !Number.isNaN(Number(raw))) return Number(raw)
+    return raw
+  }
+  const obj: Record<string, unknown> = {}
+  for (const a of attrs) {
+    obj[`@${a.name}`] = a.value
+  }
+  for (const child of children) {
+    const k = child.tagName
+    const v = xmlElementToObj(child)
+    if (k in obj) {
+      if (Array.isArray(obj[k])) (obj[k] as unknown[]).push(v)
+      else obj[k] = [obj[k], v]
+    } else {
+      obj[k] = v
+    }
+  }
+  if (children.length === 0) {
+    const txt = (el.textContent ?? '').trim()
+    if (txt) obj['#text'] = txt
+  }
+  return obj
+}
+
+/** Convert a valid XML document into pretty-printed JSON. */
+export function xmlToJson(text: string, indent: number | 'tab' = 2): string {
+  const doc = new DOMParser().parseFromString(text, 'application/xml')
+  const err = doc.querySelector('parsererror')
+  if (err) throw new Error(`Invalid XML: ${err.textContent?.split('\n')[0] ?? 'parse error'}`)
+  const root = doc.documentElement
+  const result = { [root.tagName]: xmlElementToObj(root) }
+  return JSON.stringify(result, null, indent === 'tab' ? '\t' : Number(indent) || 2)
 }
 
 // ── CSV ──────────────────────────────────────────────────────────

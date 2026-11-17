@@ -175,19 +175,33 @@ export async function extractPages(file: File, keep: number[]): Promise<OutputFi
   return { name: `${stem(file.name)}-extracted.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
-export interface PageOp { index: number; rotation: number; deleted: boolean }
+export interface PageOp {
+  index: number
+  rotation: number
+  deleted: boolean
+  isBlank?: boolean
+}
 
 export async function organizePdf(file: File, ops: PageOp[]): Promise<OutputFile> {
   const src = await load(await file.arrayBuffer())
   const active = ops.filter((o) => !o.deleted)
   if (!active.length) throw new Error('You cannot delete every page.')
   const doc = await PDFDocument.create()
-  const copied = await doc.copyPages(src, active.map((o) => o.index))
-  copied.forEach((p, i) => {
-    const rot = active[i].rotation % 360
-    if (rot) p.setRotation(degrees((p.getRotation().angle + rot) % 360))
-    doc.addPage(p)
-  })
+  const refSize: [number, number] = src.getPageCount() > 0
+    ? [src.getPage(0).getSize().width, src.getPage(0).getSize().height]
+    : [595.28, 841.89]
+
+  for (const op of active) {
+    const rot = op.rotation % 360
+    if (op.isBlank || op.index < 0) {
+      const blank = doc.addPage(refSize)
+      if (rot) blank.setRotation(degrees(rot))
+    } else {
+      const [copied] = await doc.copyPages(src, [op.index])
+      if (rot) copied.setRotation(degrees((copied.getRotation().angle + rot) % 360))
+      doc.addPage(copied)
+    }
+  }
   return { name: `${stem(file.name)}-organized.pdf`, blob: pdfBlob(await doc.save()) }
 }
 
@@ -782,22 +796,86 @@ export async function renderThumbnails(bytes: ArrayBuffer, scale = 0.35): Promis
   return urls
 }
 
-export async function pdfToImages(file: File, format: 'image/jpeg' | 'image/png', scale: number, opts: ProcessOpts = {}): Promise<OutputFile[]> {
+export interface PdfToImagesOpts extends ProcessOpts {
+  pageRange?: string
+  grayscale?: boolean
+  stitchVertical?: boolean
+}
+
+export async function pdfToImages(
+  file: File,
+  format: 'image/jpeg' | 'image/png',
+  scale: number,
+  opts: PdfToImagesOpts = {},
+): Promise<OutputFile[]> {
   const pdf = await loadPdfJs(await file.arrayBuffer())
+  const targetPages = opts.pageRange?.trim()
+    ? parseRanges(opts.pageRange, pdf.numPages).map((i) => i + 1)
+    : Array.from({ length: pdf.numPages }, (_, i) => i + 1)
   const outs: OutputFile[] = []
-  for (let i = 1; i <= pdf.numPages; i++) {
+  const renderedCanvases: HTMLCanvasElement[] = []
+  const ext = format === 'image/jpeg' ? 'jpg' : 'png'
+
+  for (let idx = 0; idx < targetPages.length; idx++) {
+    const pageNum = targetPages[idx]
     throwIfAborted(opts.signal)
-    const page = await pdf.getPage(i)
+    const page = await pdf.getPage(pageNum)
     const vp = page.getViewport({ scale })
     const c = document.createElement('canvas')
-    c.width = vp.width; c.height = vp.height
+    c.width = Math.max(1, Math.floor(vp.width))
+    c.height = Math.max(1, Math.floor(vp.height))
     const ctx = c.getContext('2d')!
-    if (format === 'image/jpeg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height) }
+    if (format === 'image/jpeg' || opts.stitchVertical) {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, c.width, c.height)
+    }
     await page.render({ canvas: c, viewport: vp }).promise
-    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), format, 0.92))
-    outs.push({ name: `${stem(file.name)}-page-${i}.${format === 'image/jpeg' ? 'jpg' : 'png'}`, blob })
-    opts.onProgress?.(i, pdf.numPages)
+
+    if (opts.grayscale) {
+      try {
+        const imgData = ctx.getImageData(0, 0, c.width, c.height)
+        const d = imgData.data
+        for (let p = 0; p < d.length; p += 4) {
+          const lum = Math.round(0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2])
+          d[p] = lum
+          d[p + 1] = lum
+          d[p + 2] = lum
+        }
+        ctx.putImageData(imgData, 0, 0)
+      } catch {
+        // ignore
+      }
+    }
+
+    if (opts.stitchVertical && targetPages.length > 1) {
+      renderedCanvases.push(c)
+    } else {
+      const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Render failed.'))), format, 0.92))
+      outs.push({ name: `${stem(file.name)}-page-${pageNum}.${ext}`, blob })
+    }
+    opts.onProgress?.(idx + 1, targetPages.length)
   }
+
+  if (opts.stitchVertical && renderedCanvases.length > 1) {
+    const gap = 16
+    const totalW = Math.max(...renderedCanvases.map((c) => c.width))
+    const totalH = renderedCanvases.reduce((s, c) => s + c.height, 0) + gap * (renderedCanvases.length - 1)
+    const stitched = document.createElement('canvas')
+    stitched.width = totalW
+    stitched.height = totalH
+    const sctx = stitched.getContext('2d')!
+    sctx.fillStyle = '#f1f5f9'
+    sctx.fillRect(0, 0, totalW, totalH)
+    let curY = 0
+    for (const c of renderedCanvases) {
+      const offX = Math.round((totalW - c.width) / 2)
+      sctx.drawImage(c, offX, curY)
+      curY += c.height + gap
+    }
+    const blob = await new Promise<Blob>((res, rej) => stitched.toBlob((b) => (b ? res(b) : rej(new Error('Stitch render failed.'))), format, 0.92))
+    outs.push({ name: `${stem(file.name)}-stitched.${ext}`, blob })
+  }
+
   closePdf(pdf)
   return outs
 }

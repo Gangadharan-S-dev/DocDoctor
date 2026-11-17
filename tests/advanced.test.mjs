@@ -82,5 +82,37 @@ const epubFile = asFile(await zip.generateAsync({ type: 'blob' }), 'book.epub', 
 const pdfFromEpub = await ADV.epubToPdf(epubFile)
 check('epub->pdf carries chapter text', (await textOf(pdfFromEpub.blob)).includes('EPUB chapter text omega.'))
 
+// Round 2 upgrades: Vector shapes in editPdfAddText, inspectPdfRepair, pdfToExcel mergeSheets, DocLayoutOpts
+const vectorEdited = await ADV.editPdfAddText(pdfFile, '', 1, 10, 10, 14, '#000000', {
+  annotations: [
+    { mode: 'rect', pageNum: 1, xPct: 10, yPct: 10, colorHex: '#dc2626', width: 80, height: 40 },
+    { mode: 'circle', pageNum: 1, xPct: 30, yPct: 30, colorHex: '#2563eb', width: 50, height: 50 },
+    { mode: 'line', pageNum: 1, xPct: 10, yPct: 50, colorHex: '#000000', width: 100 },
+    { mode: 'check', pageNum: 1, xPct: 60, yPct: 60, colorHex: '#16a34a', width: 24 },
+    { mode: 'cross', pageNum: 1, xPct: 70, yPct: 60, colorHex: '#dc2626', width: 24 },
+  ],
+})
+check('editPdfAddText draws vector shapes (rect, circle, line, check, cross)', (await PDFDocument.load(await vectorEdited.blob.arrayBuffer())).getPageCount() === 1)
+
+const diagOk = await ADV.inspectPdfRepair(pdfFile)
+const diagBad = await ADV.inspectPdfRepair(asFile(new Blob(['corrupted garbage']), 'bad.pdf', 'application/pdf'))
+check('inspectPdfRepair reports valid vs corrupted PDF diagnostics', diagOk.canOpen === true && diagOk.pagesRecovered === 1 && diagOk.hasHeader === true && diagBad.canOpen === false)
+
+const xlsxMerged = await ADV.pdfToExcel(pdfFile, { mergeSheets: true })
+const wbMerged = XLSX.read(await xlsxMerged.blob.arrayBuffer(), { type: 'array' })
+check('pdfToExcel mergeSheets adds combined All Pages sheet', wbMerged.SheetNames.includes('All Pages'))
+
+const customLayoutPdf = await ADV.docxToPdf(docxFile, {
+  pageSize: 'letter',
+  orientation: 'landscape',
+  fontFamily: 'TimesRoman',
+  fontSize: 12,
+  margin: 'wide',
+  includePageNumbers: true,
+})
+const loadedCustomPdf = await PDFDocument.load(await customLayoutPdf.blob.arrayBuffer())
+const firstPageSize = loadedCustomPdf.getPage(0).getSize()
+check('docxToPdf applies DocLayoutOpts (Landscape Letter + Page Numbers)', Math.round(firstPageSize.width) === 792 && Math.round(firstPageSize.height) === 612 && (await textOf(customLayoutPdf.blob)).includes('Page 1 of 1'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

@@ -13,8 +13,8 @@ import { downloadBlob, downloadZip } from '../processing/download'
 import type { ImageMeta, ImgFormat } from '../processing/image'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../processing/pdf'
 import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
-import type { PdfAnnotation, SignPlacement } from '../processing/advanced'
-import type { DocxReplaceRule, ExcelSheetPreview, OfficeMediaSummary } from '../processing/office'
+import type { PdfAnnotation, PdfEditAnnotationMode, PdfRepairDiagnostic, SignPlacement } from '../processing/advanced'
+import type { DocxReplaceRule, ExcelSheetPreview, OfficeMediaSummary, WordTextStats } from '../processing/office'
 import { runTool } from './tool/runEngine'
 import { OCR_LANGUAGES } from '../processing/ocr-languages'
 import { isFavorite, pushRecent, toggleFavorite } from '../lib/prefs'
@@ -137,7 +137,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pdfY, setPdfY] = useState(12)
   const [pdfSize, setPdfSize] = useState(16)
   const [pdfColor, setPdfColor] = useState('#122036')
-  const [pdfEditMode, setPdfEditMode] = useState<'text' | 'redact' | 'highlight'>('text')
+  const [pdfEditMode, setPdfEditMode] = useState<PdfEditAnnotationMode>('text')
   const [pdfFont, setPdfFont] = useState<'Helvetica' | 'TimesRoman' | 'Courier'>('Helvetica')
   const [pdfRedactW, setPdfRedactW] = useState(120)
   const [pdfRedactH, setPdfRedactH] = useState(24)
@@ -152,6 +152,39 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [pptxMode, setPptxMode] = useState<'image' | 'editable'>('image')
   const [excelOrientation, setExcelOrientation] = useState<'landscape' | 'portrait'>('landscape')
   const [excelGridlines, setExcelGridlines] = useState(true)
+
+  // Round 2 upgrades: PDF to Images, PDF to Excel, PDF Repair, Doc Layout, Word/Image/Text
+  const [pdfToImgRange, setPdfToImgRange] = useState('')
+  const [pdfToImgGrayscale, setPdfToImgGrayscale] = useState(false)
+  const [pdfToImgStitch, setPdfToImgStitch] = useState(false)
+  const [pdfExcelMergeSheets, setPdfExcelMergeSheets] = useState(false)
+  const [pdfRepairDiag, setPdfRepairDiag] = useState<PdfRepairDiagnostic | null>(null)
+  const [docPageSize, setDocPageSize] = useState<'a4' | 'letter'>('a4')
+  const [docOrientation, setDocOrientation] = useState<'portrait' | 'landscape'>('portrait')
+  const [docFontFamily, setDocFontFamily] = useState<'Helvetica' | 'TimesRoman' | 'Courier'>('Helvetica')
+  const [docFontSize, setDocFontSize] = useState(11)
+  const [docMargin, setDocMargin] = useState<'compact' | 'standard' | 'wide'>('standard')
+  const [docIncludePageNumbers, setDocIncludePageNumbers] = useState(true)
+  const [wordHtmlMode, setWordHtmlMode] = useState<'styled' | 'clean' | 'dark'>('styled')
+  const [htmlLivePreview, setHtmlLivePreview] = useState(true)
+  const [wordTxtMarkdown, setWordTxtMarkdown] = useState(false)
+  const [wordTxtCollapseBlank, setWordTxtCollapseBlank] = useState(true)
+  const [wordStats, setWordStats] = useState<WordTextStats | null>(null)
+  const [mergeWordSeparator, setMergeWordSeparator] = useState<'page-break' | 'continuous' | 'filename-heading'>('page-break')
+  const [imgPdfLayout, setImgPdfLayout] = useState<'1-up' | '2-up' | '4-up'>('1-up')
+  const [imgPdfBgColor, setImgPdfBgColor] = useState('#ffffff')
+  const [imgPdfCaptions, setImgPdfCaptions] = useState(false)
+  const [icoFitMode, setIcoFitMode] = useState<'pad' | 'cover' | 'stretch'>('pad')
+  const [icoExportWebKit, setIcoExportWebKit] = useState(false)
+  const [zipRootFolder, setZipRootFolder] = useState('')
+  const [zipGroupByType, setZipGroupByType] = useState(false)
+  const [xmlRootTag, setXmlRootTag] = useState('root')
+  const [xmlItemTag, setXmlItemTag] = useState('item')
+  const [xmlMinify, setXmlMinify] = useState(false)
+  const [xmlExportJson, setXmlExportJson] = useState(false)
+  const [htmlPreserveLinks, setHtmlPreserveLinks] = useState(true)
+  const [htmlPreserveHeadings, setHtmlPreserveHeadings] = useState(true)
+  const [txtStyledHtml, setTxtStyledHtml] = useState(true)
 
   // Office & Word upgrades
   const [wordEditMode, setWordEditMode] = useState<'editor' | 'replace'>('editor')
@@ -260,6 +293,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     setPdfAnnotations([]); setSignPlacements([]); setOfficeMedia(null); setZipSummary(null); setZipFilterNames([])
     setExcelPreview([]); setActivePreviewSheet(0); setSheetSel([]); setEstSizeBytes(null)
     setPdfTotalPages(null); setMergeFileRanges({}); setMergePageCounts({}); setWordReplaceRules([]); setWordMatchCount(null)
+    setPdfRepairDiag(null); setWordStats(null); setPdfToImgRange('')
   }
 
   // Load image dimensions / metadata when the first file changes.
@@ -270,8 +304,17 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       import('../processing/text').then((m) => m.fileMetadata(first)).then((v) => { if (alive) setFileMeta(v) }).catch(() => { if (alive) setError('Could not read this file.') })
       return () => { alive = false }
     }
-    if (tool.id === 'edit-word') {
-      import('../processing/office').then((m) => m.wordExtractText(first)).then((v) => { if (alive) setEditText(v) }).catch(() => { if (alive) setError('Could not extract text — please use a .docx file.') })
+    if (tool.id === 'edit-word' || tool.id === 'word-to-txt' || tool.id === 'extract-word-text') {
+      import('../processing/office').then(async (m) => {
+        const v = await m.wordExtractText(first)
+        if (!alive) return
+        if (tool.id === 'edit-word') setEditText(v)
+        setWordStats(m.analyzeTextStats(v))
+      }).catch(() => { if (alive && tool.id === 'edit-word') setError('Could not extract text — please use a .docx file.') })
+      return () => { alive = false }
+    }
+    if (tool.id === 'repair-pdf') {
+      import('../processing/advanced').then((m) => m.inspectPdfRepair(first)).then((d) => { if (alive) setPdfRepairDiag(d) }).catch(() => {})
       return () => { alive = false }
     }
     if (tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') {
@@ -296,7 +339,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       }).catch(() => {})
       return () => { alive = false }
     }
-    if (tool.id === 'split-pdf' || tool.id === 'pdf-page-numbers' || tool.id === 'rotate-pdf') {
+    if (tool.id === 'split-pdf' || tool.id === 'pdf-page-numbers' || tool.id === 'rotate-pdf' || tool.id === 'pdf-to-jpg' || tool.id === 'pdf-to-png' || tool.id === 'pdf-to-image') {
       first.arrayBuffer().then((buf) => import('../processing/pdf').then((m) => m.pdfPageCount(buf))).then((n) => {
         if (alive) {
           setPdfTotalPages(n)
@@ -369,15 +412,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     return () => { alive = false; clearTimeout(timer) }
   }, [first, tool.id, quality, format, imgMaxEdge, targetSizeKB])
 
-  // JSON validation, XML loading, and CSV preview when first file changes
+  // JSON validation, XML/HTML/Text/Markdown loading, and CSV preview when first file changes
   useEffect(() => {
     if (!first) return
     let alive = true
-    if (tool.id === 'json-formatter' || tool.id === 'json-to-xml' || tool.id === 'xml-formatter') {
+    if (tool.id === 'json-formatter' || tool.id === 'json-to-xml' || tool.id === 'xml-formatter' || tool.id === 'html-to-txt' || tool.id === 'txt-converter' || tool.id === 'markdown-converter') {
       first.text().then((txt) => {
         if (!alive) return
         setEditText(txt)
-        if (tool.id !== 'xml-formatter') {
+        if (tool.id === 'json-formatter' || tool.id === 'json-to-xml') {
           try {
             JSON.parse(txt)
             setJsonValidation({ ok: true, msg: 'Valid JSON format' })
@@ -455,7 +498,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     const r = results[0]
     if (!r || !/\.(txt|html|json|xml|csv|md)$/i.test(r.name)) return
     let alive = true
-    r.blob.text().then((text) => { if (alive) setPreviewText(text.slice(0, 4000)) }).catch(() => { if (alive) setPreviewText('') })
+    r.blob.text().then((text) => { if (alive) setPreviewText(text.slice(0, 16000)) }).catch(() => { if (alive) setPreviewText('') })
     return () => { alive = false }
   }, [results])
 
@@ -515,6 +558,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           csvTrimAll, csvDedupeAll,
           csvRenameCols: Object.keys(csvRenameCols).length ? csvRenameCols : undefined,
           zipLevel, zipPassword: zipPassword || undefined, zipArchiveName: zipArchiveName || undefined,
+          zipRootFolder: zipRootFolder.trim() || undefined,
+          zipGroupByType,
           zipFilterNames: zipSummary && zipFilterNames.length > 0 && zipFilterNames.length < zipSummary.entries.length ? zipFilterNames : undefined,
           maxEdge: imgMaxEdge || undefined,
           targetSizeKB: targetSizeKB || undefined,
@@ -528,6 +573,32 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           wmLogoScale,
           imgPdfMargin,
           imgPdfOrientation,
+          imgPdfLayout,
+          imgPdfBgColor,
+          imgPdfCaptions,
+          icoFitMode,
+          icoExportWebKit,
+          pdfToImgRange: pdfToImgRange.trim() || undefined,
+          pdfToImgGrayscale,
+          pdfToImgStitch,
+          pdfExcelMergeSheets,
+          docPageSize,
+          docOrientation,
+          docFontFamily,
+          docFontSize,
+          docMargin,
+          docIncludePageNumbers,
+          wordHtmlMode,
+          wordTxtMarkdown,
+          wordTxtCollapseBlank,
+          mergeWordSeparator,
+          xmlRootTag: xmlRootTag.trim() || undefined,
+          xmlItemTag: xmlItemTag.trim() || undefined,
+          xmlMinify,
+          xmlExportJson,
+          htmlPreserveLinks,
+          htmlPreserveHeadings,
+          txtStyledHtml,
         },
       })
       if (!out.length || out.some((o) => o.blob.size === 0)) throw new Error('Processing produced an empty file. Please try different settings.')
@@ -778,10 +849,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           <div className="mt-6 border-t border-slate-100 pt-5">
             <p className="mb-3 text-sm font-bold text-ink-950">
               {pdfEditMode === 'redact'
-                ? 'Click the page to position your redaction/whiteout box'
+                ? 'Click or drag on the page to position your redaction/whiteout box'
                 : pdfEditMode === 'highlight'
-                  ? 'Click the page to position your highlight box'
-                  : 'Click the page to place your text'}
+                  ? 'Click or drag on the page to position your highlight box'
+                  : pdfEditMode === 'text'
+                    ? 'Click or drag on the page to place your text'
+                    : `Click or drag on the page to place your ${pdfEditMode} shape`}
             </p>
             <Suspense fallback={<PickerFallback />}>
               <PagePlacement
@@ -796,7 +869,17 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ? (pdfColor === '#000000' ? '████' : '░░░░')
                     : pdfEditMode === 'highlight'
                       ? '▒▒ HIGHLIGHT ▒▒'
-                      : (pdfText || 'Text here')
+                      : pdfEditMode === 'rect'
+                        ? '▭ RECTANGLE'
+                        : pdfEditMode === 'circle'
+                          ? '◯ CIRCLE'
+                          : pdfEditMode === 'line'
+                            ? '━━ LINE ━━'
+                            : pdfEditMode === 'check'
+                              ? '✓ CHECK'
+                              : pdfEditMode === 'cross'
+                                ? '✗ CROSS'
+                                : (pdfText || 'Text here')
                 }
                 textColor={pdfColor}
                 textSize={pdfSize}
@@ -805,7 +888,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   page: a.pageNum,
                   x: a.xPct,
                   y: a.yPct,
-                  label: a.mode === 'text' ? (a.text || 'Text') : a.mode === 'highlight' ? 'Highlight' : 'Redact',
+                  label: a.mode === 'text' ? (a.text || 'Text') : a.mode.toUpperCase(),
                   color: a.colorHex,
                 }))}
               />
@@ -1688,6 +1771,23 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     })}
                   </div>
                 </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Non-Square Image Aspect Fitting', icoFitMode, setIcoFitMode as never, [
+                    ['pad', 'Pad with Transparency (Keep exact proportions)'],
+                    ['cover', 'Center-Crop to Square (Fill icon canvas)'],
+                    ['stretch', 'Stretch to Square'],
+                  ])}
+                  <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                    <input
+                      type="checkbox"
+                      checked={icoExportWebKit}
+                      onChange={(e) => setIcoExportWebKit(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    <span>Export Full Web Favicon &amp; PWA Kit (.zip with <code className="rounded bg-slate-100 px-1">favicon.ico</code>, <code className="rounded bg-slate-100 px-1">apple-touch-icon.png</code>, <code className="rounded bg-slate-100 px-1">icon-192/512.png</code>, <code className="rounded bg-slate-100 px-1">site.webmanifest</code> &amp; HTML snippet)</span>
+                  </label>
+                </div>
               </div>
             )}
 
@@ -1696,7 +1796,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 {files.length > 0 && (
                   <div className="space-y-2">
                     <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-                      PDF Page Sequence ({files.length} page{files.length > 1 ? 's' : ''})
+                      PDF Page Sequence ({files.length} image{files.length > 1 ? 's' : ''})
                     </span>
                     <div className="flex gap-2.5 overflow-x-auto pb-2">
                       {files.map((f, i) => (
@@ -1706,17 +1806,22 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                               <img src={URL.createObjectURL(f.file)} alt="" className="h-full w-full object-cover" />
                             )}
                           </div>
-                          <span className="mt-1 block text-[10px] font-bold text-slate-600 truncate">Page {i + 1}</span>
+                          <span className="mt-1 block text-[10px] font-bold text-slate-600 truncate">Image {i + 1}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {sel('Page size', pageSize, setPageSize as never, [
-                    ['fit', 'Fit page to image (Preserve exact aspect ratio)'],
+                    ['fit', 'Fit page to image (Exact aspect)'],
                     ['a4', 'Standard A4 (595 × 842 pt)'],
                     ['letter', 'US Letter (612 × 792 pt)'],
+                  ])}
+                  {sel('Grid Layout', imgPdfLayout, setImgPdfLayout as never, [
+                    ['1-up', '1 Image per Page (Standard)'],
+                    ['2-up', '2 Images per Page (Stacked)'],
+                    ['4-up', '4 Images per Page (2×2 Grid)'],
                   ])}
                   {sel('Page Margin', imgPdfMargin, setImgPdfMargin as never, [
                     ['none', 'No margins (Full Bleed)'],
@@ -1728,6 +1833,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ['portrait', 'Force Portrait'],
                     ['landscape', 'Force Landscape'],
                   ])}
+                </div>
+                <div className="flex flex-wrap items-center gap-6 pt-1">
+                  <label className="flex items-center gap-2 text-xs font-bold text-ink-950">
+                    <span>Page Background Color:</span>
+                    <input
+                      type="color"
+                      value={imgPdfBgColor}
+                      onChange={(e) => setImgPdfBgColor(e.target.value)}
+                      className="h-8 w-14 cursor-pointer rounded-lg border border-slate-200 bg-white px-1"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-bold text-ink-950">
+                    <input
+                      type="checkbox"
+                      checked={imgPdfCaptions}
+                      onChange={(e) => setImgPdfCaptions(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Print filename captions underneath each image
+                  </label>
                 </div>
               </div>
             )}
@@ -1925,9 +2050,102 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
-            {(tool.id === 'pdf-to-jpg' || tool.id === 'pdf-to-png' || tool.id === 'pdf-to-image') && sel('Render quality', String(scale), (v: string) => setScale(+v), [['1', 'Standard (72 dpi)'], ['2', 'High (144 dpi)'], ['3', 'Print (216 dpi)']])}
+            {(tool.id === 'pdf-to-jpg' || tool.id === 'pdf-to-png' || tool.id === 'pdf-to-image') && (
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('Render quality', String(scale), (v: string) => setScale(+v), [
+                    ['1', 'Standard (72 dpi)'],
+                    ['2', 'High (144 dpi)'],
+                    ['3', 'Print (216 dpi)'],
+                  ])}
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Page Range to Export (Optional)</span>
+                    <input
+                      value={pdfToImgRange}
+                      onChange={(e) => setPdfToImgRange(e.target.value)}
+                      placeholder={pdfTotalPages ? `All pages (1-${pdfTotalPages}) or e.g. 1-3, 5` : 'All pages or e.g. 1-3, 5'}
+                      className="input font-mono"
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center gap-6 pt-1 text-xs font-bold text-ink-950">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pdfToImgGrayscale}
+                      onChange={(e) => setPdfToImgGrayscale(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Convert output images to B&amp;W Grayscale
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pdfToImgStitch}
+                      onChange={(e) => setPdfToImgStitch(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Stitch all pages vertically into a single continuous scroll image
+                  </label>
+                </div>
+              </div>
+            )}
             {tool.id === 'split-word' && <div>{sel('Split by', splitMode, setSplitMode, [['heading', 'Heading 1 sections'], ['paragraphs', 'Every 15 paragraphs']])}<p className="mt-2 text-xs text-slate-500">Word pagination depends on fonts and rendering, so splitting uses document structure — headings or paragraph blocks — never guessed page breaks.</p></div>}
-            {(tool.id === 'txt-converter' || tool.id === 'markdown-converter') && sel('Convert to', txtTo, setTxtTo, [['html', 'HTML'], ['txt', 'Plain text (TXT)'], ['md', 'Markdown']])}
+            {(tool.id === 'txt-converter' || tool.id === 'markdown-converter' || tool.id === 'html-to-txt') && (
+              <div className="space-y-4">
+                {tool.id !== 'html-to-txt' ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {sel('Convert to', txtTo, setTxtTo, [['html', 'HTML Document (.html)'], ['txt', 'Plain text (.txt)'], ['md', 'Markdown (.md)']])}
+                    {txtTo === 'html' && (
+                      <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                        <input
+                          type="checkbox"
+                          checked={txtStyledHtml}
+                          onChange={(e) => setTxtStyledHtml(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        Include responsive typography &amp; print-ready CSS stylesheet
+                      </label>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-6 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={htmlPreserveHeadings}
+                        onChange={(e) => setHtmlPreserveHeadings(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Format headings &amp; list items with clean Markdown markers (#, •)
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={htmlPreserveLinks}
+                        onChange={(e) => setHtmlPreserveLinks(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Preserve hyperlink URLs inline — e.g. Label (https://...)
+                    </label>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-slate-600">
+                    <span>Interactive Source Editor (Edit content before converting)</span>
+                    <span>{editText.split(/\s+/).filter(Boolean).length} words · {editText.length} chars</span>
+                  </div>
+                  <textarea
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    rows={8}
+                    className="input font-mono !text-xs leading-relaxed"
+                    placeholder="Edit or paste text/markdown/HTML here…"
+                  />
+                </div>
+              </div>
+            )}
 
             {(tool.id === 'json-formatter' || tool.id === 'json-to-xml' || tool.id === 'xml-formatter') && (
               <div className="space-y-4">
@@ -1935,6 +2153,42 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   <div className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold ${jsonValidation.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
                     {jsonValidation.ok ? <Check className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-red-600" />}
                     {jsonValidation.msg}
+                  </div>
+                )}
+
+                {tool.id === 'json-to-xml' && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-ink-950">Root XML Element Name</span>
+                      <input value={xmlRootTag} onChange={(e) => setXmlRootTag(e.target.value)} className="input font-mono text-xs" placeholder="root" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-ink-950">Array Item Element Name</span>
+                      <input value={xmlItemTag} onChange={(e) => setXmlItemTag(e.target.value)} className="input font-mono text-xs" placeholder="item" />
+                    </label>
+                  </div>
+                )}
+
+                {tool.id === 'xml-formatter' && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {sel('XML Indentation Style', xmlMinify ? 'min' : String(jsonIndent), (v: string) => {
+                      if (v === 'min') setXmlMinify(true)
+                      else { setXmlMinify(false); setJsonIndent(v === 'tab' ? 'tab' : +v) }
+                    }, [
+                      ['2', '2 Spaces (Standard Pretty-print)'],
+                      ['4', '4 Spaces (Expanded)'],
+                      ['tab', 'Tab Indentation'],
+                      ['min', 'Minify XML (Strip whitespace between tags)'],
+                    ])}
+                    <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                      <input
+                        type="checkbox"
+                        checked={xmlExportJson}
+                        onChange={(e) => setXmlExportJson(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Convert XML structure to JSON (.json) instead of XML
+                    </label>
                   </div>
                 )}
 
@@ -2160,10 +2414,14 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {tool.id === 'zip-files' && (
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <label className="block">
                     <span className="mb-1.5 block text-sm font-bold text-ink-950">Archive Filename</span>
                     <input value={zipArchiveName} onChange={(e) => setZipArchiveName(e.target.value)} className="input" placeholder="files.zip" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Root Folder Prefix (Optional)</span>
+                    <input value={zipRootFolder} onChange={(e) => setZipRootFolder(e.target.value)} className="input font-mono text-xs" placeholder="e.g. project-backup" />
                   </label>
                   {sel('Compression Level', String(zipLevel), (v: string) => setZipLevel(+v), [
                     ['0', '0 — Store Only (Fastest, no compression)'],
@@ -2184,6 +2442,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     />
                   </label>
                 </div>
+                <label className="flex items-center gap-2 text-xs font-bold text-ink-950">
+                  <input
+                    type="checkbox"
+                    checked={zipGroupByType}
+                    onChange={(e) => setZipGroupByType(e.target.checked)}
+                    className="h-4 w-4 accent-[#1D6FF2]"
+                  />
+                  <span>Auto-organize files into subfolders by category (<code className="rounded bg-slate-100 px-1">pdf/</code>, <code className="rounded bg-slate-100 px-1">images/</code>, <code className="rounded bg-slate-100 px-1">documents/</code>, <code className="rounded bg-slate-100 px-1">spreadsheets/</code>, <code className="rounded bg-slate-100 px-1">data/</code>)</span>
+                </label>
                 {zipPassword && (
                   <p className="text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-3.5 py-2">
                     Files will be encrypted with WebCrypto <strong>PBKDF2-SHA256 + AES-256-GCM</strong> inside the ZIP archive. Use DocDoctor&apos;s Extract ZIP tool with the same password to decrypt.
@@ -2250,7 +2517,66 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
-            {tool.id === 'merge-word' && <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order with a page break between them. You can reorder them in the list above before merging.</p>}
+            {tool.id === 'merge-word' && (
+              <div className="space-y-3">
+                <div className="max-w-md">
+                  {sel('Document Separator Between Merged Files', mergeWordSeparator, setMergeWordSeparator as never, [
+                    ['page-break', 'Page Break (Start each file on a new page)'],
+                    ['continuous', 'Continuous Flow (No page break between files)'],
+                    ['filename-heading', 'Page Break + Filename Section Heading (H1)'],
+                  ])}
+                </div>
+                <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order. You can reorder them in the file list above before merging.</p>
+              </div>
+            )}
+            {tool.id === 'word-to-html' && (
+              <div className="max-w-md">
+                {sel('HTML Output Theme & Stylesheet', wordHtmlMode, setWordHtmlMode as never, [
+                  ['styled', 'Styled Light Theme (Responsive article & table CSS)'],
+                  ['clean', 'Clean Semantic HTML Only (No embedded CSS — ideal for CMS)'],
+                  ['dark', 'Dark Mode Reader Theme (High-contrast slate styling)'],
+                ])}
+              </div>
+            )}
+            {(tool.id === 'word-to-txt' || tool.id === 'extract-word-text') && (
+              <div className="space-y-3">
+                {wordStats && (
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    {[
+                      ['Words', wordStats.words.toLocaleString()],
+                      ['Characters', wordStats.chars.toLocaleString()],
+                      ['Paragraphs', wordStats.paragraphs.toLocaleString()],
+                      ['Reading Time', `~${wordStats.readingTimeMin} min`],
+                    ].map(([k, v]) => (
+                      <div key={k} className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2">
+                        <div className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">{k}</div>
+                        <div className="mt-0.5 text-sm font-extrabold text-ink-950">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-6 text-xs font-bold text-ink-950">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wordTxtMarkdown}
+                      onChange={(e) => setWordTxtMarkdown(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Preserve Markdown headings (#), bullets (-), and pipe tables (| a | b |)
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wordTxtCollapseBlank}
+                      onChange={(e) => setWordTxtCollapseBlank(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Collapse consecutive empty lines
+                  </label>
+                </div>
+              </div>
+            )}
             {tool.id === 'merge-presentations' && <p className="text-xs font-semibold text-slate-500">Slides are appended in upload order using the first deck&apos;s theme. Reorder your decks in the list above before processing.</p>}
 
             {tool.id === 'split-presentations' && (
@@ -2466,28 +2792,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             )}
             {tool.id === 'edit-pdf' && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
-                  <button
-                    type="button"
-                    onClick={() => { setPdfEditMode('text'); setPdfColor('#122036') }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'text' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                  >
-                    Add Text
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setPdfEditMode('highlight'); setPdfColor('#facc15') }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'highlight' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                  >
-                    Highlight Box
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setPdfEditMode('redact'); setPdfColor('#000000') }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${pdfEditMode === 'redact' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                  >
-                    Redact / Whiteout Box
-                  </button>
+                <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 pb-2">
+                  {[
+                    { mode: 'text', label: 'Add Text', color: '#122036' },
+                    { mode: 'highlight', label: 'Highlight Box', color: '#facc15' },
+                    { mode: 'redact', label: 'Redact Box', color: '#000000' },
+                    { mode: 'rect', label: '▭ Rectangle', color: '#dc2626' },
+                    { mode: 'circle', label: '◯ Circle', color: '#2563eb' },
+                    { mode: 'line', label: '━ Line', color: '#0f172a' },
+                    { mode: 'check', label: '✓ Checkmark', color: '#16a34a' },
+                    { mode: 'cross', label: '✗ Cross', color: '#dc2626' },
+                  ].map((item) => (
+                    <button
+                      key={item.mode}
+                      type="button"
+                      onClick={() => { setPdfEditMode(item.mode as PdfEditAnnotationMode); setPdfColor(item.color) }}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${pdfEditMode === item.mode ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                   <button
                     type="button"
                     onClick={() => {
@@ -2528,9 +2852,9 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 ) : (
                   <div className="space-y-3">
                     <div className="grid gap-4 sm:grid-cols-3">
-                      {slider('Box Width', pdfRedactW, setPdfRedactW, 20, 360, ' px')}
-                      {slider('Box Height', pdfRedactH, setPdfRedactH, 10, 120, ' px')}
-                      <label className="block"><span className="mb-1.5 block text-sm font-bold">Box Color</span><input type="color" value={pdfColor} onChange={(e) => setPdfColor(e.target.value)} className="h-[46px] w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-2" /></label>
+                      {slider('Shape / Box Width', pdfRedactW, setPdfRedactW, 16, 360, ' px')}
+                      {pdfEditMode !== 'line' && pdfEditMode !== 'check' && pdfEditMode !== 'cross' && slider('Shape / Box Height', pdfRedactH, setPdfRedactH, 10, 180, ' px')}
+                      <label className="block"><span className="mb-1.5 block text-sm font-bold">Color</span><input type="color" value={pdfColor} onChange={(e) => setPdfColor(e.target.value)} className="h-[46px] w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-2" /></label>
                     </div>
                     {pdfEditMode === 'redact' && (
                       <label className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-950">
@@ -2571,7 +2895,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   {sel('Signature position', signPos, setSignPos as never, [
-                    ['custom', 'Custom placement (click on page above)'],
+                    ['custom', 'Custom placement (click or drag on page above)'],
                     ['bottom-right', 'Bottom right'],
                     ['bottom-left', 'Bottom left'],
                     ['center', 'Center'],
@@ -2632,7 +2956,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </div>
                 )}
                 <p className="text-xs text-slate-500">
-                  {signPos === 'custom' ? `Signature placed at ${pdfX}% across, ${pdfY}% down on page ${pdfPage}. Click or flip pages on the preview above to reposition.` : `Using ${signPos.replace('-', ' ')} preset position.`}
+                  {signPos === 'custom' ? `Signature placed at ${pdfX}% across, ${pdfY}% down on page ${pdfPage}. Click or drag on the preview above to reposition.` : `Using ${signPos.replace('-', ' ')} preset position.`}
                 </p>
               </div>
             )}
@@ -2668,11 +2992,98 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 </p>
               </div>
             )}
-            {tool.id === 'repair-pdf' && <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the document structure. Files that cannot be opened at all (truncated, heavily corrupted) cannot be repaired — you&apos;ll get a clear error instead of a fake success.</p>}
+            {tool.id === 'repair-pdf' && (
+              <div className="space-y-3">
+                {pdfRepairDiag && (
+                  <div className={`rounded-2xl border p-4 space-y-2 text-xs ${pdfRepairDiag.canOpen ? 'border-teal-200 bg-teal-50/60' : 'border-red-200 bg-red-50'}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 font-bold text-ink-950">
+                      <span>PDF Structure Diagnostic Inspector</span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${pdfRepairDiag.canOpen ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                        {pdfRepairDiag.canOpen ? `Recoverable (${pdfRepairDiag.pagesRecovered} page${pdfRepairDiag.pagesRecovered === 1 ? '' : 's'})` : 'Unrecoverable'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 pt-1">
+                      <div className="rounded-lg bg-white px-3 py-1.5 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">PDF Header</span>
+                        <span className="font-bold text-ink-950">{pdfRepairDiag.hasHeader ? 'Present (%PDF-)' : 'Missing'}</span>
+                      </div>
+                      <div className="rounded-lg bg-white px-3 py-1.5 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">EOF Marker</span>
+                        <span className="font-bold text-ink-950">{pdfRepairDiag.hasEofMarker ? 'Valid (%%EOF)' : 'Missing / Truncated'}</span>
+                      </div>
+                      <div className="rounded-lg bg-white px-3 py-1.5 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Pages Found</span>
+                        <span className="font-bold text-ink-950">{pdfRepairDiag.pagesRecovered}</span>
+                      </div>
+                      <div className="rounded-lg bg-white px-3 py-1.5 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">PDF Objects</span>
+                        <span className="font-bold text-ink-950">{pdfRepairDiag.objectsCount}</span>
+                      </div>
+                    </div>
+                    <ul className="list-disc pl-4 space-y-0.5 text-slate-600 font-semibold">
+                      {pdfRepairDiag.notes.map((n, i) => <li key={i}>{n}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the cross-reference table and copying valid pages into a clean PDF container.</p>
+              </div>
+            )}
             {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Reconstructs headings, bold text, bullet lists, and multi-column tables from selectable PDF text into an editable Word document.</p>}
-            {tool.id === 'pdf-to-excel' && <p className="text-xs font-semibold text-slate-500">Clusters horizontal text gaps into structured columns and auto-sizes Excel column widths, one worksheet per PDF page.</p>}
-            {(tool.id === 'word-to-pdf' || tool.id === 'docx-to-pdf') && <p className="text-xs font-semibold text-amber-700">Structured PDF flow: preserves headings, bold/italic text, bullet lists, and bordered tables from your DOCX.</p>}
-            {tool.id === 'epub-to-pdf' && <p className="text-xs font-semibold text-slate-500">Extracts chapters in reading order and renders headings, paragraphs, lists, and tables into a clean PDF.</p>}
+            {tool.id === 'pdf-to-excel' && (
+              <div className="space-y-2.5">
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-bold text-ink-950">
+                  <input
+                    type="checkbox"
+                    checked={pdfExcelMergeSheets}
+                    onChange={(e) => setPdfExcelMergeSheets(e.target.checked)}
+                    className="h-4 w-4 accent-[#1D6FF2]"
+                  />
+                  <span>Also generate a combined &quot;All Pages&quot; master worksheet alongside per-page sheets</span>
+                </label>
+                <p className="text-xs font-semibold text-slate-500">Clusters horizontal text gaps into structured columns and auto-sizes Excel column widths.</p>
+              </div>
+            )}
+            {(tool.id === 'word-to-pdf' || tool.id === 'docx-to-pdf' || tool.id === 'epub-to-pdf') && (
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {sel('Page Size', docPageSize, setDocPageSize as never, [
+                    ['a4', 'Standard A4 (595 × 842 pt)'],
+                    ['letter', 'US Letter (612 × 792 pt)'],
+                  ])}
+                  {sel('Orientation', docOrientation, setDocOrientation as never, [
+                    ['portrait', 'Portrait (Vertical)'],
+                    ['landscape', 'Landscape (Horizontal)'],
+                  ])}
+                  {sel('Page Margins', docMargin, setDocMargin as never, [
+                    ['compact', 'Compact (36 pt / 0.5 in)'],
+                    ['standard', 'Standard (50 pt / 0.7 in)'],
+                    ['wide', 'Wide (72 pt / 1.0 in)'],
+                  ])}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {sel('Typography Font Family', docFontFamily, setDocFontFamily as never, [
+                    ['Helvetica', 'Helvetica (Clean Sans-Serif)'],
+                    ['TimesRoman', 'Times Roman (Book Serif)'],
+                    ['Courier', 'Courier (Monospace)'],
+                  ])}
+                  {slider('Body Font Size', docFontSize, setDocFontSize, 9, 16, ' pt')}
+                  <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                    <input
+                      type="checkbox"
+                      checked={docIncludePageNumbers}
+                      onChange={(e) => setDocIncludePageNumbers(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Stamp footer page numbers (Page X of Y)
+                  </label>
+                </div>
+                <p className="text-xs font-semibold text-slate-500">
+                  {tool.id === 'epub-to-pdf'
+                    ? 'Extracts chapters in spine reading order and renders headings, paragraphs, lists, and tables into a paginated PDF.'
+                    : 'Structured PDF flow: preserves headings, bold/italic text, bullet lists, and bordered tables from your DOCX.'}
+                </p>
+              </div>
+            )}
             {(tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && <p className="text-xs font-semibold text-slate-500">Selected pages and sections will be removed from the DOCX file while preserving all other styles, headers, footers and tables.</p>}
             {tool.id === 'protect-pdf' && (
               <div className="space-y-4">
@@ -2892,8 +3303,37 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
             {previewText && (
               <figure className="mt-4">
-                <figcaption className="mb-1.5 text-xs font-extrabold uppercase tracking-wide text-slate-400">Preview — {results[0].name}</figcaption>
-                <pre className="max-h-64 overflow-auto rounded-xl bg-ink-950 p-4 text-xs leading-relaxed text-slate-100">{previewText}</pre>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <figcaption className="text-xs font-extrabold uppercase tracking-wide text-slate-400">Preview — {results[0].name}</figcaption>
+                  {results[0]?.name.toLowerCase().endsWith('.html') && (
+                    <div className="flex items-center rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold shadow-sm">
+                      <button
+                        type="button"
+                        onClick={() => setHtmlLivePreview(true)}
+                        className={`rounded px-2.5 py-0.5 ${htmlLivePreview ? 'bg-accent text-white' : 'text-slate-600 hover:text-ink-950'}`}
+                      >
+                        Rendered HTML
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHtmlLivePreview(false)}
+                        className={`rounded px-2.5 py-0.5 ${!htmlLivePreview ? 'bg-accent text-white' : 'text-slate-600 hover:text-ink-950'}`}
+                      >
+                        Source Code
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {results[0]?.name.toLowerCase().endsWith('.html') && htmlLivePreview ? (
+                  <iframe
+                    srcDoc={previewText}
+                    sandbox=""
+                    title="Rendered HTML Preview"
+                    className="h-72 w-full rounded-xl border border-slate-200 bg-white shadow-inner"
+                  />
+                ) : (
+                  <pre className="max-h-64 overflow-auto rounded-xl bg-ink-950 p-4 text-xs leading-relaxed text-slate-100">{previewText}</pre>
+                )}
               </figure>
             )}
 

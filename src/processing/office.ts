@@ -117,9 +117,59 @@ const mammothInput = (buf: ArrayBuffer): never =>
   (typeof Buffer !== 'undefined' ? { buffer: Buffer.from(buf) } : { arrayBuffer: buf }) as never
 
 // ── Word ─────────────────────────────────────────────────────────
-export async function wordToText(file: File): Promise<OutputFile> {
+export interface WordToTextOpts {
+  collapseBlankLines?: boolean
+  markdownFormatting?: boolean
+}
+
+export interface WordTextStats {
+  words: number
+  chars: number
+  paragraphs: number
+  readingTimeMin: number
+}
+
+export function analyzeTextStats(text: string): WordTextStats {
+  const trimmed = text.trim()
+  const words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0
+  const chars = text.length
+  const paragraphs = trimmed ? trimmed.split(/\n\s*\n/).filter((p) => p.trim().length > 0).length : 0
+  const readingTimeMin = Math.max(1, Math.ceil(words / 200))
+  return { words, chars, paragraphs, readingTimeMin }
+}
+
+export async function wordToText(file: File, opts?: WordToTextOpts): Promise<OutputFile> {
   const m = await mammoth()
-  const { value } = await m.extractRawText(mammothInput(await file.arrayBuffer()))
+  const buf = await file.arrayBuffer()
+  let value: string
+  if (opts?.markdownFormatting && typeof DOMParser !== 'undefined') {
+    const htmlRes = await m.convertToHtml(mammothInput(buf))
+    const doc = new DOMParser().parseFromString(htmlRes.value, 'text/html')
+    const lines: string[] = []
+    for (const el of Array.from(doc.body.children)) {
+      const tag = el.tagName.toLowerCase()
+      const txt = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+      if (!txt) continue
+      if (tag === 'h1') lines.push(`# ${txt}`)
+      else if (tag === 'h2') lines.push(`## ${txt}`)
+      else if (tag === 'h3') lines.push(`### ${txt}`)
+      else if (tag === 'ul' || tag === 'ol') {
+        Array.from(el.querySelectorAll('li')).forEach((li, idx) => {
+          const lt = (li.textContent ?? '').replace(/\s+/g, ' ').trim()
+          if (lt) lines.push(tag === 'ol' ? `${idx + 1}. ${lt}` : `- ${lt}`)
+        })
+      } else {
+        lines.push(txt)
+      }
+    }
+    value = lines.join('\n\n')
+  } else {
+    const raw = await m.extractRawText(mammothInput(buf))
+    value = raw.value
+  }
+  if (opts?.collapseBlankLines) {
+    value = value.replace(/\n{3,}/g, '\n\n').trim()
+  }
   return { name: `${stem(file.name)}.txt`, blob: new Blob([value], { type: 'text/plain' }) }
 }
 
@@ -129,10 +179,23 @@ export async function wordExtractText(file: File): Promise<string> {
   return value
 }
 
-export async function wordToHtml(file: File): Promise<OutputFile> {
+export interface WordToHtmlOpts {
+  mode?: 'styled' | 'clean' | 'dark'
+}
+
+export async function wordToHtml(file: File, opts?: WordToHtmlOpts): Promise<OutputFile> {
   const m = await mammoth()
   const { value } = await m.convertToHtml(mammothInput(await file.arrayBuffer()))
-  const html = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title></head><body>\n${value}\n</body></html>`
+  const mode = opts?.mode ?? 'styled'
+  if (mode === 'clean') {
+    const clean = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${stem(file.name)}</title></head><body>\n${value}\n</body></html>`
+    return { name: `${stem(file.name)}.html`, blob: new Blob([clean], { type: 'text/html' }) }
+  }
+  const isDark = mode === 'dark'
+  const css = isDark
+    ? `body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:40px auto;padding:0 24px;line-height:1.68;color:#e2e8f0;background:#0f172a}h1,h2,h3{color:#f8fafc;margin-top:1.5em}table{border-collapse:collapse;width:100%;margin:1.2em 0}td,th{border:1px solid #334155;padding:8px 12px}tr:nth-child(even){background:#1e293b}img{max-width:100%;height:auto;border-radius:8px}a{color:#38bdf8}`
+    : `body{font-family:system-ui,-apple-system,sans-serif;max-width:820px;margin:40px auto;padding:0 24px;line-height:1.68;color:#1e293b;background:#ffffff}h1,h2,h3{color:#0f172a;margin-top:1.5em}table{border-collapse:collapse;width:100%;margin:1.2em 0}td,th{border:1px solid #cbd5e1;padding:8px 12px}tr:nth-child(even){background:#f8fafc}img{max-width:100%;height:auto;border-radius:8px}a{color:#1d6ff2}`
+  const html = `<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${stem(file.name)}</title><style>${css}</style></head><body>\n${value}\n</body></html>`
   return { name: `${stem(file.name)}.html`, blob: new Blob([html], { type: 'text/html' }) }
 }
 
@@ -307,12 +370,16 @@ function xmlDoc(xml: string): Document {
 }
 const xmlStr = (d: Document) => new XMLSerializer().serializeToString(d)
 
+export interface MergeWordOpts {
+  separator?: 'page-break' | 'continuous' | 'filename-heading'
+}
+
 /**
  * Merge DOCX files by appending body content with relationship remapping.
  * Images/media referenced by appended content are copied with fresh IDs.
  * Complex numbering/styles from later files fall back to base styles — see UI note.
  */
-export async function mergeWord(files: File[]): Promise<OutputFile> {
+export async function mergeWord(files: File[], opts?: MergeWordOpts): Promise<OutputFile> {
   if (files.length < 2) throw new Error('Select at least two DOCX files to merge.')
   const baseZip = await JSZip.loadAsync(await files[0].arrayBuffer())
   const baseDocFile = baseZip.file('word/document.xml')
@@ -326,6 +393,34 @@ export async function mergeWord(files: File[]): Promise<OutputFile> {
   const body = baseDoc.querySelector('body')!
   const sectPr = body.querySelector(':scope > sectPr')
   const insertBefore = (node: Node) => { if (sectPr) body.insertBefore(node, sectPr); else body.appendChild(node) }
+  const sep = opts?.separator ?? 'page-break'
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+  const makeHeadingNode = (title: string, withPageBreak: boolean) => {
+    const hP = baseDoc.createElementNS(wNs, 'w:p')
+    const pPr = baseDoc.createElementNS(wNs, 'w:pPr')
+    const pStyle = baseDoc.createElementNS(wNs, 'w:pStyle')
+    pStyle.setAttribute('w:val', 'Heading1')
+    pPr.appendChild(pStyle)
+    hP.appendChild(pPr)
+    if (withPageBreak) {
+      const brR = baseDoc.createElementNS(wNs, 'w:r')
+      const br = baseDoc.createElementNS(wNs, 'w:br')
+      br.setAttribute('w:type', 'page')
+      brR.appendChild(br)
+      hP.appendChild(brR)
+    }
+    const hR = baseDoc.createElementNS(wNs, 'w:r')
+    const hT = baseDoc.createElementNS(wNs, 'w:t')
+    hT.textContent = title
+    hR.appendChild(hT)
+    hP.appendChild(hR)
+    return hP
+  }
+
+  if (sep === 'filename-heading') {
+    body.insertBefore(makeHeadingNode(stem(files[0].name), false), body.firstChild)
+  }
 
   for (let fi = 1; fi < files.length; fi++) {
     const zip = await JSZip.loadAsync(await files[fi].arrayBuffer())
@@ -360,12 +455,17 @@ export async function mergeWord(files: File[]): Promise<OutputFile> {
         relsRoot.appendChild(nr)
       }
     }
-    // Page break separator then appended content (minus its section properties).
-    const brP = baseDoc.createElementNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'w:p')
-    const brR = baseDoc.createElementNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'w:r')
-    const br = baseDoc.createElementNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'w:br')
-    br.setAttribute('w:type', 'page')
-    brR.appendChild(br); brP.appendChild(brR); insertBefore(brP)
+
+    if (sep === 'page-break') {
+      const brP = baseDoc.createElementNS(wNs, 'w:p')
+      const brR = baseDoc.createElementNS(wNs, 'w:r')
+      const br = baseDoc.createElementNS(wNs, 'w:br')
+      br.setAttribute('w:type', 'page')
+      brR.appendChild(br); brP.appendChild(brR); insertBefore(brP)
+    } else if (sep === 'filename-heading') {
+      insertBefore(makeHeadingNode(stem(files[fi].name), true))
+    }
+
     for (const child of Array.from(srcDoc.querySelector('body')!.childNodes)) {
       if ((child as Element).tagName === 'w:sectPr') continue
       const imported = baseDoc.importNode(child, true) as Element
