@@ -185,9 +185,307 @@ export async function estimateCompressedSize(file: File, opts: CompressOpts): Pr
   return out.blob.size
 }
 
+export interface PerspectivePoint {
+  x: number
+  y: number
+}
+
+export interface PerspectiveQuad {
+  tl: PerspectivePoint
+  tr: PerspectivePoint
+  br: PerspectivePoint
+  bl: PerspectivePoint
+}
+
+export type ScanEnhanceMode = 'none' | 'magic-color' | 'bw-document'
+
 export interface CropOpts {
   circular?: boolean
   cornerRadius?: number
+  cropMode?: 'rect' | 'perspective'
+  perspectiveQuad?: PerspectiveQuad
+  perspectiveAspect?: number | null
+  scanEnhance?: ScanEnhanceMode
+}
+
+/**
+ * Compute target output pixel dimensions (width, height) from a 4-corner perspective quad
+ * in percentage coordinates (0..100) and source pixel dimensions.
+ */
+export function computePerspectiveDimensions(
+  srcW: number,
+  srcH: number,
+  quad: PerspectiveQuad,
+  forcedAspect?: number | null,
+): { width: number; height: number; quadPx: [PerspectivePoint, PerspectivePoint, PerspectivePoint, PerspectivePoint] } {
+  const p0 = { x: (quad.tl.x / 100) * srcW, y: (quad.tl.y / 100) * srcH }
+  const p1 = { x: (quad.tr.x / 100) * srcW, y: (quad.tr.y / 100) * srcH }
+  const p2 = { x: (quad.br.x / 100) * srcW, y: (quad.br.y / 100) * srcH }
+  const p3 = { x: (quad.bl.x / 100) * srcW, y: (quad.bl.y / 100) * srcH }
+
+  const topW = Math.hypot(p1.x - p0.x, p1.y - p0.y)
+  const bottomW = Math.hypot(p2.x - p3.x, p2.y - p3.y)
+  const leftH = Math.hypot(p3.x - p0.x, p3.y - p0.y)
+  const rightH = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+
+  const width = Math.max(1, Math.round(Math.max(topW, bottomW)))
+  let height = Math.max(1, Math.round(Math.max(leftH, rightH)))
+  if (forcedAspect && forcedAspect > 0) {
+    height = Math.max(1, Math.round(width / forcedAspect))
+  }
+  return { width, height, quadPx: [p0, p1, p2, p3] }
+}
+
+/**
+ * Compute closed-form 8-DOF projective homography coefficients mapping unit square (u,v) in [0,1]^2
+ * to a arbitrary 4-corner quadrilateral [p0 (TL), p1 (TR), p2 (BR), p3 (BL)].
+ */
+export function computeUnitSquareToQuadHomography(
+  p0: PerspectivePoint,
+  p1: PerspectivePoint,
+  p2: PerspectivePoint,
+  p3: PerspectivePoint,
+) {
+  const dx1 = p1.x - p2.x
+  const dy1 = p1.y - p2.y
+  const dx2 = p3.x - p2.x
+  const dy2 = p3.y - p2.y
+  const sx = p0.x - p1.x + p2.x - p3.x
+  const sy = p0.y - p1.y + p2.y - p3.y
+
+  const det = dx1 * dy2 - dx2 * dy1
+  if (Math.abs(det) < 1e-9) {
+    return null
+  }
+  const g = (sx * dy2 - sy * dx2) / det
+  const h = (dx1 * sy - dy1 * sx) / det
+  const a = p1.x - p0.x + g * p1.x
+  const b = p3.x - p0.x + h * p3.x
+  const c = p0.x
+  const d = p1.y - p0.y + g * p1.y
+  const e = p3.y - p0.y + h * p3.y
+  const f = p0.y
+  return { a, b, c, d, e, f, g, h }
+}
+
+/**
+ * Warp a 4-point quadrilateral region from `srcData` into a rectified `dstW x dstH` ImageData
+ * using projective homography and bilinear pixel interpolation.
+ */
+export function warpPerspectiveImageData(
+  srcData: ImageData,
+  dstW: number,
+  dstH: number,
+  quadPx: [PerspectivePoint, PerspectivePoint, PerspectivePoint, PerspectivePoint],
+): ImageData {
+  const [p0, p1, p2, p3] = quadPx
+  const H = computeUnitSquareToQuadHomography(p0, p1, p2, p3)
+  const out = new ImageData(dstW, dstH)
+  const src = srcData.data
+  const dst = out.data
+  const sw = srcData.width
+  const sh = srcData.height
+  const maxX = sw - 1
+  const maxY = sh - 1
+  const invW = dstW > 1 ? 1 / (dstW - 1) : 0
+  const invH = dstH > 1 ? 1 / (dstH - 1) : 0
+
+  for (let dy = 0; dy < dstH; dy++) {
+    const v = dy * invH
+    for (let dx = 0; dx < dstW; dx++) {
+      const u = dx * invW
+      let sx: number
+      let sy: number
+      if (H) {
+        const denom = H.g * u + H.h * v + 1
+        sx = (H.a * u + H.b * v + H.c) / denom
+        sy = (H.d * u + H.e * v + H.f) / denom
+      } else {
+        // Bilinear fallback if degenerate quad
+        const topX = p0.x + (p1.x - p0.x) * u
+        const topY = p0.y + (p1.y - p0.y) * u
+        const botX = p3.x + (p2.x - p3.x) * u
+        const botY = p3.y + (p2.y - p3.y) * u
+        sx = topX + (botX - topX) * v
+        sy = topY + (botY - topY) * v
+      }
+
+      const clampedX = Math.max(0, Math.min(maxX, sx))
+      const clampedY = Math.max(0, Math.min(maxY, sy))
+      const x0 = Math.floor(clampedX)
+      const y0 = Math.floor(clampedY)
+      const x1 = Math.min(maxX, x0 + 1)
+      const y1 = Math.min(maxY, y0 + 1)
+      const fx = clampedX - x0
+      const fy = clampedY - y0
+
+      const w00 = (1 - fx) * (1 - fy)
+      const w10 = fx * (1 - fy)
+      const w01 = (1 - fx) * fy
+      const w11 = fx * fy
+
+      const i00 = (y0 * sw + x0) * 4
+      const i10 = (y0 * sw + x1) * 4
+      const i01 = (y1 * sw + x0) * 4
+      const i11 = (y1 * sw + x1) * 4
+
+      const di = (dy * dstW + dx) * 4
+      dst[di] = Math.round(src[i00] * w00 + src[i10] * w10 + src[i01] * w01 + src[i11] * w11)
+      dst[di + 1] = Math.round(src[i00 + 1] * w00 + src[i10 + 1] * w10 + src[i01 + 1] * w01 + src[i11 + 1] * w11)
+      dst[di + 2] = Math.round(src[i00 + 2] * w00 + src[i10 + 2] * w10 + src[i01 + 2] * w01 + src[i11 + 2] * w11)
+      dst[di + 3] = Math.round(src[i00 + 3] * w00 + src[i10 + 3] * w10 + src[i01 + 3] * w01 + src[i11 + 3] * w11)
+    }
+  }
+  return out
+}
+
+/**
+ * Optional document scan enhancement (Magic Color contrast/whitening or Crisp B&W Document threshold).
+ */
+export function applyScanEnhancement(imgData: ImageData, mode: ScanEnhanceMode): void {
+  if (mode === 'none') return
+  const d = imgData.data
+  if (mode === 'magic-color') {
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2]
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b
+      if (lum > 195) {
+        // Push paper background toward clean white
+        const boost = Math.min(1, (lum - 195) / 45)
+        d[i] = Math.min(255, Math.round(r + (255 - r) * boost * 0.85))
+        d[i + 1] = Math.min(255, Math.round(g + (255 - g) * boost * 0.85))
+        d[i + 2] = Math.min(255, Math.round(b + (255 - b) * boost * 0.85))
+      } else {
+        // Deepen ink & boost saturation/contrast
+        const factor = 1.28
+        d[i] = Math.max(0, Math.min(255, Math.round((r - 128) * factor + 122)))
+        d[i + 1] = Math.max(0, Math.min(255, Math.round((g - 128) * factor + 122)))
+        d[i + 2] = Math.max(0, Math.min(255, Math.round((b - 128) * factor + 122)))
+      }
+    }
+  } else if (mode === 'bw-document') {
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      // Soft high-contrast S-curve for readable text
+      const v = lum > 168 ? 255 : lum < 105 ? 12 : Math.round(((lum - 105) / 63) * 243 + 12)
+      d[i] = v
+      d[i + 1] = v
+      d[i + 2] = v
+    }
+  }
+}
+
+/**
+ * Automatically estimate the 4 corners of a document, card, or rectangular subject in an image
+ * by analyzing border background contrast and edge gradients on a downsampled buffer.
+ */
+export function autoDetectDocumentQuad(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+): PerspectiveQuad {
+  const fallback: PerspectiveQuad = {
+    tl: { x: 10, y: 10 },
+    tr: { x: 90, y: 10 },
+    br: { x: 90, y: 90 },
+    bl: { x: 10, y: 90 },
+  }
+  try {
+    const sampleSize = 140
+    const scale = Math.min(sampleSize / Math.max(1, srcW), sampleSize / Math.max(1, srcH))
+    const w = Math.max(24, Math.round(srcW * scale))
+    const h = Math.max(24, Math.round(srcH * scale))
+    const c = canvas(w, h)
+    const ctx = c.getContext('2d')
+    if (!ctx) return fallback
+    ctx.drawImage(source, 0, 0, w, h)
+    const { data } = ctx.getImageData(0, 0, w, h)
+
+    // Estimate average border color around outer 2px perimeter
+    let bR = 0, bG = 0, bB = 0, bCount = 0
+    for (let x = 0; x < w; x++) {
+      for (const y of [0, 1, h - 2, h - 1]) {
+        const i = (y * w + x) * 4
+        bR += data[i]; bG += data[i + 1]; bB += data[i + 2]; bCount++
+      }
+    }
+    for (let y = 2; y < h - 2; y++) {
+      for (const x of [0, 1, w - 2, w - 1]) {
+        const i = (y * w + x) * 4
+        bR += data[i]; bG += data[i + 1]; bB += data[i + 2]; bCount++
+      }
+    }
+    bR /= Math.max(1, bCount)
+    bG /= Math.max(1, bCount)
+    bB /= Math.max(1, bCount)
+
+    // Compute foreground/edge interest points
+    const scores = new Float32Array(w * h)
+    let maxScore = 0
+    for (let y = 2; y < h - 2; y++) {
+      for (let x = 2; x < w - 2; x++) {
+        const i = (y * w + x) * 4
+        const diffBg = Math.hypot(data[i] - bR, data[i + 1] - bG, data[i + 2] - bB)
+        const rightI = (y * w + (x + 1)) * 4
+        const downI = ((y + 1) * w + x) * 4
+        const grad = Math.hypot(
+          data[rightI] - data[i],
+          data[downI] - data[i],
+        )
+        const s = diffBg * 0.75 + grad * 0.65
+        scores[y * w + x] = s
+        if (s > maxScore) maxScore = s
+      }
+    }
+
+    if (maxScore < 28) return fallback
+    const threshold = maxScore * 0.38
+
+    let bestTL = { x: w * 0.12, y: h * 0.12, metric: Infinity }
+    let bestTR = { x: w * 0.88, y: h * 0.12, metric: -Infinity }
+    let bestBR = { x: w * 0.88, y: h * 0.88, metric: -Infinity }
+    let bestBL = { x: w * 0.12, y: h * 0.88, metric: -Infinity }
+    let activeCount = 0
+
+    for (let y = 2; y < h - 2; y++) {
+      const ny = y / h
+      for (let x = 2; x < w - 2; x++) {
+        if (scores[y * w + x] < threshold) continue
+        activeCount++
+        const nx = x / w
+        if (nx + ny < bestTL.metric) bestTL = { x, y, metric: nx + ny }
+        if (nx - ny > bestTR.metric) bestTR = { x, y, metric: nx - ny }
+        if (nx + ny > bestBR.metric) bestBR = { x, y, metric: nx + ny }
+        if (ny - nx > bestBL.metric) bestBL = { x, y, metric: ny - nx }
+      }
+    }
+
+    if (activeCount < 20) return fallback
+
+    const toPct = (pt: { x: number; y: number }) => ({
+      x: Math.max(2, Math.min(98, Math.round((pt.x / (w - 1)) * 100))),
+      y: Math.max(2, Math.min(98, Math.round((pt.y / (h - 1)) * 100))),
+    })
+
+    const quad: PerspectiveQuad = {
+      tl: toPct(bestTL),
+      tr: toPct(bestTR),
+      br: toPct(bestBR),
+      bl: toPct(bestBL),
+    }
+
+    // Ensure non-degenerate quad
+    const topSpan = quad.tr.x - quad.tl.x
+    const botSpan = quad.br.x - quad.bl.x
+    const leftSpan = quad.bl.y - quad.tl.y
+    const rightSpan = quad.br.y - quad.tr.y
+    if (topSpan < 15 || botSpan < 15 || leftSpan < 15 || rightSpan < 15) {
+      return fallback
+    }
+    return quad
+  } catch {
+    return fallback
+  }
 }
 
 function clipRoundedRect(ctx: CanvasRenderingContext2D, w: number, h: number, r: number) {
@@ -215,22 +513,62 @@ export async function cropImage(
   opts?: CropOpts,
 ): Promise<OutputFile> {
   const bmp = await loadBitmap(file)
-  const sx = (xPct / 100) * bmp.width, sy = (yPct / 100) * bmp.height
-  const sw = (wPct / 100) * bmp.width, sh = (hPct / 100) * bmp.height
-  const c = canvas(sw, sh)
-  const ctx = c.getContext('2d')!
   const hasRounded = !opts?.circular && (opts?.cornerRadius ?? 0) > 0
+  let c: HTMLCanvasElement
 
-  if (opts?.circular) {
-    ctx.beginPath()
-    ctx.arc(c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2, 0, Math.PI * 2)
-    ctx.clip()
-  } else if (hasRounded) {
-    const rPx = ((opts?.cornerRadius ?? 0) / 100) * Math.min(c.width, c.height)
-    clipRoundedRect(ctx, c.width, c.height, rPx)
+  if (opts?.cropMode === 'perspective' && opts.perspectiveQuad) {
+    const { width: dstW, height: dstH, quadPx } = computePerspectiveDimensions(
+      bmp.width,
+      bmp.height,
+      opts.perspectiveQuad,
+      opts.perspectiveAspect,
+    )
+    const srcCanvas = canvas(bmp.width, bmp.height)
+    const srcCtx = srcCanvas.getContext('2d')!
+    srcCtx.drawImage(bmp, 0, 0)
+    const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height)
+    const warpedData = warpPerspectiveImageData(srcData, dstW, dstH, quadPx)
+    if (opts.scanEnhance && opts.scanEnhance !== 'none') {
+      applyScanEnhancement(warpedData, opts.scanEnhance)
+    }
+
+    const rawWarped = canvas(dstW, dstH)
+    rawWarped.getContext('2d')!.putImageData(warpedData, 0, 0)
+
+    c = canvas(dstW, dstH)
+    const ctx = c.getContext('2d')!
+    if (opts.circular) {
+      ctx.beginPath()
+      ctx.arc(c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2, 0, Math.PI * 2)
+      ctx.clip()
+    } else if (hasRounded) {
+      const rPx = ((opts.cornerRadius ?? 0) / 100) * Math.min(c.width, c.height)
+      clipRoundedRect(ctx, c.width, c.height, rPx)
+    }
+    ctx.drawImage(rawWarped, 0, 0)
+  } else {
+    const sx = (xPct / 100) * bmp.width, sy = (yPct / 100) * bmp.height
+    const sw = (wPct / 100) * bmp.width, sh = (hPct / 100) * bmp.height
+    c = canvas(sw, sh)
+    const ctx = c.getContext('2d')!
+
+    if (opts?.circular) {
+      ctx.beginPath()
+      ctx.arc(c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2, 0, Math.PI * 2)
+      ctx.clip()
+    } else if (hasRounded) {
+      const rPx = ((opts?.cornerRadius ?? 0) / 100) * Math.min(c.width, c.height)
+      clipRoundedRect(ctx, c.width, c.height, rPx)
+    }
+
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height)
+    if (opts?.scanEnhance && opts.scanEnhance !== 'none') {
+      const imgData = ctx.getImageData(0, 0, c.width, c.height)
+      applyScanEnhancement(imgData, opts.scanEnhance)
+      ctx.putImageData(imgData, 0, 0)
+    }
   }
 
-  ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height)
   bmp.close()
   const needsAlpha = Boolean(opts?.circular || hasRounded)
   const type: ImgFormat = needsAlpha ? 'image/png' : (file.type === 'image/png' ? 'image/png' : 'image/jpeg')

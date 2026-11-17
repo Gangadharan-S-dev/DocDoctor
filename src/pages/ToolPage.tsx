@@ -10,7 +10,7 @@ import UploadArea, { type PickedFile } from '../components/UploadArea'
 import ToolCard from '../components/ToolCard'
 import type { OutputFile } from '../processing/download'
 import { downloadBlob, downloadZip } from '../processing/download'
-import type { ImageMeta, ImgFormat } from '../processing/image'
+import type { ImageMeta, ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../processing/image'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../processing/pdf'
 import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
 import type { PdfAnnotation, PdfEditAnnotationMode, PdfRepairDiagnostic, SignPlacement } from '../processing/advanced'
@@ -244,6 +244,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [smoothing, setSmoothing] = useState<'high' | 'pixelated'>('high')
   const [cropCircular, setCropCircular] = useState(false)
   const [cropCornerRadius, setCropCornerRadius] = useState(0)
+  const [cropMode, setCropMode] = useState<'rect' | 'perspective'>('rect')
+  const [perspectiveQuad, setPerspectiveQuad] = useState<PerspectiveQuad>({
+    tl: { x: 10, y: 10 },
+    tr: { x: 90, y: 10 },
+    br: { x: 90, y: 90 },
+    bl: { x: 10, y: 90 },
+  })
+  const [perspectiveAspect, setPerspectiveAspect] = useState<number | null>(null)
+  const [cropScanEnhance, setCropScanEnhance] = useState<ScanEnhanceMode>('none')
   const [imgBgColor, setImgBgColor] = useState('#ffffff')
   const [rotBgColor, setRotBgColor] = useState('#ffffff')
   const [rotFineAngle, setRotFineAngle] = useState(0)
@@ -566,6 +575,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           resizeMode,
           smoothing,
           cropCircular,
+          cropMode,
+          perspectiveQuad,
+          perspectiveAspect,
+          cropScanEnhance,
           imgBgColor,
           rotBgColor,
           wmColor,
@@ -1294,14 +1307,75 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     cornerRadius={cropCornerRadius}
                     onCornerRadiusChange={setCropCornerRadius}
                     imageDims={dims}
+                    cropMode={cropMode}
+                    onCropModeChange={setCropMode}
+                    perspectiveQuad={perspectiveQuad}
+                    onPerspectiveQuadChange={setPerspectiveQuad}
+                    perspectiveAspect={perspectiveAspect}
+                    onPerspectiveAspectChange={setPerspectiveAspect}
+                    scanEnhance={cropScanEnhance}
+                    onScanEnhanceChange={setCropScanEnhance}
                   />
                 </Suspense>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {slider('Start X %', crop.x, (v) => setCrop({ ...crop, x: v }), 0, 90)}
-                  {slider('Start Y %', crop.y, (v) => setCrop({ ...crop, y: v }), 0, 90)}
-                  {slider('Width %', crop.w, (v) => setCrop({ ...crop, w: v }), 10, 100)}
-                  {slider('Height %', crop.h, (v) => setCrop({ ...crop, h: v }), 10, 100)}
-                </div>
+                {cropMode === 'rect' ? (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {slider('Start X %', crop.x, (v) => setCrop({ ...crop, x: v }), 0, 90)}
+                    {slider('Start Y %', crop.y, (v) => setCrop({ ...crop, y: v }), 0, 90)}
+                    {slider('Width %', crop.w, (v) => setCrop({ ...crop, w: v }), 10, 100)}
+                    {slider('Height %', crop.h, (v) => setCrop({ ...crop, h: v }), 10, 100)}
+                  </div>
+                ) : (
+                  <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                    {(
+                      [
+                        ['tl', 'Top-Left (TL)'],
+                        ['tr', 'Top-Right (TR)'],
+                        ['bl', 'Bottom-Left (BL)'],
+                        ['br', 'Bottom-Right (BR)'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key} className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
+                        <span className="mb-1.5 block text-xs font-extrabold text-ink-950">{label}</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block text-[11px] font-bold text-slate-500">
+                            X %
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={Math.round(perspectiveQuad[key].x)}
+                              onChange={(e) =>
+                                setPerspectiveQuad({
+                                  ...perspectiveQuad,
+                                  [key]: { ...perspectiveQuad[key], x: Math.max(0, Math.min(100, +e.target.value)) },
+                                })
+                              }
+                              className="input mt-0.5 !py-1 !px-2 text-xs font-mono"
+                            />
+                          </label>
+                          <label className="block text-[11px] font-bold text-slate-500">
+                            Y %
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={Math.round(perspectiveQuad[key].y)}
+                              onChange={(e) =>
+                                setPerspectiveQuad({
+                                  ...perspectiveQuad,
+                                  [key]: { ...perspectiveQuad[key], y: Math.max(0, Math.min(100, +e.target.value)) },
+                                })
+                              }
+                              className="input mt-0.5 !py-1 !px-2 text-xs font-mono"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

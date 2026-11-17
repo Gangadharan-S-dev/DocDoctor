@@ -1,6 +1,6 @@
 import type { Tool } from '../../data/tools'
 import type { OutputFile } from '../../processing/download'
-import type { ImgFormat } from '../../processing/image'
+import type { ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../../processing/image'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../../processing/pdf'
 import type { PdfAnnotation, PdfEditAnnotationMode, SignPlacement } from '../../processing/advanced'
 import type { CsvAction } from '../../processing/text'
@@ -155,6 +155,10 @@ export interface RunSettings {
   resizeMode?: 'stretch' | 'contain' | 'cover'
   smoothing?: 'high' | 'pixelated'
   cropCircular?: boolean
+  cropMode?: 'rect' | 'perspective'
+  perspectiveQuad?: PerspectiveQuad
+  perspectiveAspect?: number | null
+  cropScanEnhance?: ScanEnhanceMode
   imgBgColor?: string
   rotBgColor?: string
   wmColor?: string
@@ -226,6 +230,10 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       case 'crop-image': return batch(fs, (f) => IMG.cropImage(f, s.crop.x, s.crop.y, s.crop.w, s.crop.h, {
         circular: s.cropCircular,
         cornerRadius: s.cropCornerRadius,
+        cropMode: s.cropMode,
+        perspectiveQuad: s.perspectiveQuad,
+        perspectiveAspect: s.perspectiveAspect,
+        scanEnhance: s.cropScanEnhance,
       }))
       case 'jpg-to-png': case 'png-to-jpg': case 'jpg-to-webp': case 'png-to-webp': {
         const t: ImgFormat = id.endsWith('png') ? 'image/png' : id.endsWith('webp') ? 'image/webp' : 'image/jpeg'
