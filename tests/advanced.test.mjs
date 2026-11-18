@@ -114,5 +114,11 @@ const loadedCustomPdf = await PDFDocument.load(await customLayoutPdf.blob.arrayB
 const firstPageSize = loadedCustomPdf.getPage(0).getSize()
 check('docxToPdf applies DocLayoutOpts (Landscape Letter + Page Numbers)', Math.round(firstPageSize.width) === 792 && Math.round(firstPageSize.height) === 612 && (await textOf(customLayoutPdf.blob)).includes('Page 1 of 1'))
 
+const pdfDocxInfo = await ADV.inspectPdfForDocx(pdfFile)
+check('inspectPdfForDocx reports pageCount, wordCount, and selectable text status', pdfDocxInfo.pageCount === 1 && pdfDocxInfo.hasSelectableText === true && pdfDocxInfo.wordCount > 0)
+
+const richParsed = await ADV.parseDocxRichBlocks(docxFile)
+check('parseDocxRichBlocks parses OOXML paragraphs and spans directly', richParsed.blocks.length >= 2 && richParsed.blocks[0].text.includes('Word body zeta.'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

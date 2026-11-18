@@ -4,7 +4,7 @@ import type { ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../../processi
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../../processing/pdf'
 import type { PdfAnnotation, PdfEditAnnotationMode, SignPlacement } from '../../processing/advanced'
 import type { CsvAction } from '../../processing/text'
-import type { DocxReplaceRule } from '../../processing/office'
+import type { DocxReplaceRule, EditableDocxNode, SplitWordOpts, WordExtractTarget } from '../../processing/office'
 
 export interface RunSettings {
   quality: number
@@ -60,11 +60,31 @@ export interface RunSettings {
   csvDedupeAll?: boolean
   csvRenameCols?: Record<number, string>
   editText: string
-  wordEditMode?: 'editor' | 'replace'
+  wordEditMode?: 'visual' | 'editor' | 'replace' | 'placeholders'
+  wordVisualNodes?: EditableDocxNode[]
   wordFind?: string
   wordReplace?: string
   wordMatchCase?: boolean
+  wordWholeWord?: boolean
+  wordUseRegex?: boolean
   wordReplaceRules?: DocxReplaceRule[]
+  wordPlaceholderValues?: Record<string, string>
+  docxPageActionMode?: 'remove' | 'keep'
+  splitWordOpts?: SplitWordOpts
+  mergeWordIncludeToc?: boolean
+  mergeWordImportStyles?: boolean
+  docxStripXmlBloat?: boolean
+  docxStripComments?: boolean
+  docxRemoveOrphans?: boolean
+  docxConvertPngToJpeg?: boolean
+  wordHtmlImageHandling?: 'base64' | 'zip-folder' | 'strip'
+  wordHtmlIncludeToc?: boolean
+  wordExtractTarget?: WordExtractTarget
+  docIncludeHeadersFooters?: boolean
+  docEmbedImages?: boolean
+  pdfToDocxMode?: 'editable' | 'hybrid' | 'snapshot'
+  pdfToDocxPreserveAlign?: boolean
+  pdfToDocxPageBreaks?: boolean
   pdfText: string
   pdfPage: number
   pdfX: number
@@ -342,19 +362,58 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
     const mediaOpts = {
       quality: s.officeMediaQuality ? s.officeMediaQuality / 100 : undefined,
       maxEdge: s.officeMediaMaxEdge,
+      stripXmlBloat: s.docxStripXmlBloat,
+      stripCommentsAndRevisions: s.docxStripComments,
+      removeOrphanMedia: s.docxRemoveOrphans,
+      convertPngToJpeg: s.docxConvertPngToJpeg,
     }
     switch (id) {
-      case 'word-to-txt': case 'extract-word-text': return batch(fs, (f) => OFF.wordToText(f, {
+      case 'word-to-txt': return batch(fs, (f) => OFF.wordToText(f, {
         markdownFormatting: s.wordTxtMarkdown,
         collapseBlankLines: s.wordTxtCollapseBlank,
       }))
-      case 'word-to-html': return batch(fs, (f) => OFF.wordToHtml(f, { mode: s.wordHtmlMode }))
+      case 'extract-word-text': {
+        if (s.wordExtractTarget && s.wordExtractTarget !== 'all') {
+          return OFF.extractWordAssets(f0, {
+            markdownFormatting: s.wordTxtMarkdown,
+            collapseBlankLines: s.wordTxtCollapseBlank,
+            extractTarget: s.wordExtractTarget,
+          })
+        }
+        return batch(fs, (f) => OFF.wordToText(f, {
+          markdownFormatting: s.wordTxtMarkdown,
+          collapseBlankLines: s.wordTxtCollapseBlank,
+        }))
+      }
+      case 'word-to-html': return batch(fs, (f) => OFF.wordToHtml(f, {
+        mode: s.wordHtmlMode,
+        imageHandling: s.wordHtmlImageHandling,
+        includeTocSidebar: s.wordHtmlIncludeToc,
+      }))
       case 'compress-docx': return batch(fs, (f) => OFF.recompressPackage(f, `${f.name.replace(/\.docx$/i, '')}-compressed.docx`, OFF.DOCX_TYPE, mediaOpts))
-      case 'merge-word': return [await OFF.mergeWord(fs, { separator: s.mergeWordSeparator })]
-      case 'split-word': return OFF.splitWord(f0, s.splitMode)
+      case 'merge-word': return [await OFF.mergeWord(fs, {
+        separator: s.mergeWordSeparator,
+        includeToc: s.mergeWordIncludeToc,
+        importStyles: s.mergeWordImportStyles,
+      })]
+      case 'split-word': return OFF.splitWord(f0, s.splitWordOpts ?? s.splitMode)
       case 'edit-word': {
+        if (s.wordEditMode === 'visual' && s.wordVisualNodes && s.wordVisualNodes.length > 0) {
+          return [await OFF.saveEditedDocxNodes(f0, s.wordVisualNodes)]
+        }
+        if (s.wordEditMode === 'placeholders' && s.wordPlaceholderValues) {
+          const rules = Object.entries(s.wordPlaceholderValues)
+            .filter(([k, v]) => k.length > 0 && v.trim().length > 0)
+            .map(([find, replace]) => ({ find, replace }))
+          if (!rules.length) throw new Error('Fill in at least one placeholder value first.')
+          return [await OFF.replaceInDocx(f0, '', '', true, rules)]
+        }
         if (s.wordEditMode === 'replace') {
-          return [await OFF.replaceInDocx(f0, s.wordFind ?? '', s.wordReplace ?? '', s.wordMatchCase, s.wordReplaceRules)]
+          return [await OFF.replaceInDocx(f0, s.wordFind ?? '', s.wordReplace ?? '', s.wordMatchCase, s.wordReplaceRules, {
+            matchCase: s.wordMatchCase,
+            wholeWord: s.wordWholeWord,
+            useRegex: s.wordUseRegex,
+          })]
         }
         return [await OFF.textToDocx(s.editText, `${f0.name.replace(/\.docx$/i, '')}-edited.docx`)]
       }
@@ -392,7 +451,7 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         showGridlines: s.excelGridlines,
         sheets: s.sheetSel?.length ? s.sheetSel : undefined,
       })]
-      case 'remove-word-pages': case 'docx-page-remover': return [await OFF.removeDocxPages(f0, s.blockSel)]
+      case 'remove-word-pages': case 'docx-page-remover': return [await OFF.removeDocxPages(f0, s.blockSel, s.docxPageActionMode ?? 'remove')]
     }
   }
   if (TEXT_IDS.has(id)) {
@@ -470,6 +529,8 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
       fontSize: s.docFontSize,
       margin: s.docMargin,
       includePageNumbers: s.docIncludePageNumbers,
+      includeHeadersFooters: s.docIncludeHeadersFooters,
+      embedImages: s.docEmbedImages,
     }
     switch (id) {
       case 'edit-pdf': return [await ADV.editPdfAddText(f0, s.pdfText, s.pdfPage, s.pdfX, s.pdfY, s.pdfSize, s.pdfColor, {
@@ -493,7 +554,11 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
         })]
       }
       case 'repair-pdf': return batch(fs, (f) => ADV.repairPdf(f))
-      case 'pdf-to-word': case 'pdf-to-docx': return [await ADV.pdfToDocx(f0)]
+      case 'pdf-to-word': case 'pdf-to-docx': return [await ADV.pdfToDocx(f0, {
+        mode: s.pdfToDocxMode,
+        preserveAlignment: s.pdfToDocxPreserveAlign,
+        includePageBreaks: s.pdfToDocxPageBreaks,
+      })]
       case 'pdf-to-excel': return [await ADV.pdfToExcel(f0, { mergeSheets: s.pdfExcelMergeSheets })]
       case 'pdf-to-powerpoint': case 'pdf-to-pptx': return [await ADV.pdfToPowerpoint(f0, s.scale, { mode: s.pptxMode })]
       case 'word-to-pdf': case 'docx-to-pdf': return [await ADV.docxToPdf(f0, docLayout)]

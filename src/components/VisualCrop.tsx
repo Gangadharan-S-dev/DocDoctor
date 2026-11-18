@@ -708,8 +708,9 @@ export default function VisualCrop({
                             x2={vBot.x}
                             y2={vBot.y}
                             stroke="#ffffff"
-                            strokeWidth="0.35"
-                            strokeDasharray="1.5,1.5"
+                            strokeWidth="1"
+                            strokeDasharray="4,4"
+                            vectorEffect="non-scaling-stroke"
                           />
                           <line
                             x1={hLeft.x}
@@ -717,16 +718,17 @@ export default function VisualCrop({
                             x2={hRight.x}
                             y2={hRight.y}
                             stroke="#ffffff"
-                            strokeWidth="0.35"
-                            strokeDasharray="1.5,1.5"
+                            strokeWidth="1"
+                            strokeDasharray="4,4"
+                            vectorEffect="non-scaling-stroke"
                           />
                         </g>
                       )
                     })}
                 </svg>
 
-                {/* 4 Draggable Corner Handles */}
-                {CORNER_META.map(({ key, short, name }) => {
+                {/* 4 Draggable Corner Handles (compact 12px visual dot with comfortable hit area) */}
+                {CORNER_META.map(({ key, name }) => {
                   const pt = quad[key]
                   const isActive = draggingMode === key
                   return (
@@ -736,12 +738,16 @@ export default function VisualCrop({
                       aria-label={`${name} perspective handle`}
                       onPointerDown={(e) => handlePointerDown(key, e)}
                       style={{ left: `${pt.x}%`, top: `${pt.y}%` }}
-                      className={`group absolute -translate-x-1/2 -translate-y-1/2 flex h-7 w-7 cursor-grab active:cursor-grabbing items-center justify-center rounded-full border-2 border-white bg-accent text-[9px] font-extrabold text-white shadow-lg transition-transform ${
-                        isActive ? 'scale-125 ring-4 ring-amber-400/80 bg-amber-500' : 'hover:scale-110'
-                      }`}
+                      className="group absolute -translate-x-1/2 -translate-y-1/2 flex h-6 w-6 cursor-grab active:cursor-grabbing items-center justify-center rounded-full bg-transparent p-0 focus:outline-none"
                       title={`${name} (${Math.round(pt.x)}%, ${Math.round(pt.y)}%) — Drag to align corner`}
                     >
-                      {short}
+                      <span
+                        className={`block h-3 w-3 rounded-full border-[1.5px] border-white shadow-md transition-transform ${
+                          isActive
+                            ? 'scale-125 bg-amber-500 ring-2 ring-amber-400/80'
+                            : 'bg-accent group-hover:scale-125'
+                        }`}
+                      />
                     </button>
                   )
                 })}

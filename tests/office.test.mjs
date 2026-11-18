@@ -235,5 +235,41 @@ const htmlFile = asFile(new Blob(['<h1>Title</h1><p>Visit <a href="https://examp
 const extractedHtmlTxt = await (await TXT.htmlToText(htmlFile, { preserveLinks: true, preserveHeadings: true })).blob.text()
 check('htmlToText preserves headings and inline link URLs', extractedHtmlTxt.includes('# Title') && extractedHtmlTxt.includes('Example (https://example.com)'))
 
+// Word Tools Deep Upgrades: In-Place Visual Editor, Placeholder Auto-Detection, Context Snippets, Keep/Extract Pages, 5-Mode Split, Auto-TOC Merge, Multi-Target Extract
+const editableNodes = await OFF.listEditableDocxNodes(docxA)
+check('listEditableDocxNodes parses paragraphs and headings from DOCX XML', editableNodes.length === 4 && editableNodes[0].kind === 'heading1' && editableNodes[0].text === 'Alpha Doc')
+editableNodes[1].text = 'In-place edited Alpha paragraph!'
+const savedVisualDocx = await OFF.saveEditedDocxNodes(docxA, editableNodes)
+const savedVisualTxt = await (await OFF.wordToText(asFile(savedVisualDocx.blob, 'sv.docx', OFF.DOCX_TYPE))).blob.text()
+check('saveEditedDocxNodes updates DOCX XML in-place preserving document structure', savedVisualTxt.includes('In-place edited Alpha paragraph!') && savedVisualTxt.includes('Section Two'))
+
+const phDocx = await makeDocx('Contract for {{CLIENT_NAME}}', 'Signed on [SIGN_DATE] for project <PROJECT_CODE>.')
+const detectedPh = await OFF.detectDocxPlaceholders(phDocx)
+check('detectDocxPlaceholders finds {{...}}, [...], and <...> tokens', detectedPh.includes('{{CLIENT_NAME}}') && detectedPh.includes('[SIGN_DATE]') && detectedPh.includes('<PROJECT_CODE>'))
+
+const matchPrev = await OFF.previewDocxMatches(docxA, 'Alpha', { matchCase: false, wholeWord: true })
+check('previewDocxMatches returns count and context snippets', matchPrev.count === 2 && matchPrev.snippets.length === 2 && matchPrev.snippets[0].match === 'Alpha')
+
+const extractedKeepDocx = await OFF.removeDocxPages(docxA, [0, 1], 'keep')
+const extractedKeepTxt = await (await OFF.wordToText(asFile(extractedKeepDocx.blob, 'ek.docx', OFF.DOCX_TYPE))).blob.text()
+check('removeDocxPages keep mode extracts only selected blocks', extractedKeepTxt.includes('Alpha body') && !extractedKeepTxt.includes('Second section body'))
+
+const splitPrev = await OFF.previewSplitWord(docxA, { mode: 'heading-any', nameByHeading: true })
+check('previewSplitWord computes smart heading-slugged filenames and word counts', splitPrev.length === 2 && splitPrev[0].fileName.includes('alpha-doc.docx'))
+const customSplitOut = await OFF.splitWord(docxA, { mode: 'custom-blocks', customSplitIndices: [2], nameByHeading: true })
+check('splitWord custom-blocks splits at exact block index', customSplitOut.length === 2)
+
+const docxSum = await OFF.inspectDocxSummary(docxA)
+check('inspectDocxSummary reports wordCount, headings, and pageCount', docxSum.wordCount > 0 && docxSum.headings.includes('Alpha Doc'))
+const mergedTocDocx = await OFF.mergeWord([docxA, docxB], { separator: 'page-break', includeToc: true, importStyles: true })
+const mergedTocTxt = await (await OFF.wordToText(asFile(mergedTocDocx.blob, 'mtoc.docx', OFF.DOCX_TYPE))).blob.text()
+check('mergeWord includeToc generates Table of Contents cover section', mergedTocTxt.includes('Table of Contents') && mergedTocTxt.includes('1. AlphaDoc'))
+
+const headingsAsset = await OFF.extractWordAssets(docxA, { extractTarget: 'headings' })
+check('extractWordAssets headings extracts markdown outline', (await headingsAsset[0].blob.text()).includes('# Alpha Doc'))
+
+const tocHtmlOut = await (await OFF.wordToHtml(docxA, { mode: 'styled', includeTocSidebar: true })).blob.text()
+check('wordToHtml includeTocSidebar injects clickable Table of Contents nav', tocHtmlOut.includes('class="doc-toc"') && tocHtmlOut.includes('#section-1'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

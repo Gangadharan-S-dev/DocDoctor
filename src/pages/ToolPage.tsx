@@ -13,8 +13,11 @@ import { downloadBlob, downloadZip } from '../processing/download'
 import type { ImageMeta, ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../processing/image'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../processing/pdf'
 import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
-import type { PdfAnnotation, PdfEditAnnotationMode, PdfRepairDiagnostic, SignPlacement } from '../processing/advanced'
-import type { DocxReplaceRule, ExcelSheetPreview, OfficeMediaSummary, WordTextStats } from '../processing/office'
+import type { PdfAnnotation, PdfDocxPreviewInfo, PdfEditAnnotationMode, PdfRepairDiagnostic, SignPlacement } from '../processing/advanced'
+import type {
+  DocxMatchSnippet, DocxPageInfo, DocxReplaceRule, DocxSummary, EditableDocxNode,
+  ExcelSheetPreview, OfficeMediaSummary, SplitWordOpts, WordExtractTarget, WordTextStats,
+} from '../processing/office'
 import { runTool } from './tool/runEngine'
 import { OCR_LANGUAGES } from '../processing/ocr-languages'
 import { isFavorite, pushRecent, toggleFavorite } from '../lib/prefs'
@@ -26,6 +29,8 @@ const SlidePicker = lazy(async () => ({ default: (await import('../components/Of
 const SlideReorder = lazy(async () => ({ default: (await import('../components/OfficePickers')).SlideReorder }))
 const SheetPicker = lazy(async () => ({ default: (await import('../components/OfficePickers')).SheetPicker }))
 const DocxBlockPicker = lazy(async () => ({ default: (await import('../components/OfficePickers')).DocxBlockPicker }))
+const DocxVisualEditor = lazy(async () => ({ default: (await import('../components/OfficePickers')).DocxVisualEditor }))
+const DocxSplitStudio = lazy(async () => ({ default: (await import('../components/OfficePickers')).DocxSplitStudio }))
 const SignaturePad = lazy(async () => ({ default: (await import('../components/PdfStudio')).SignaturePad }))
 const PagePlacement = lazy(async () => ({ default: (await import('../components/PdfStudio')).PagePlacement }))
 const VisualCrop = lazy(() => import('../components/VisualCrop'))
@@ -109,7 +114,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [slideSel, setSlideSel] = useState<string[]>([])
   const [slideOrder, setSlideOrder] = useState<string[]>([])
   const [sheetSel, setSheetSel] = useState<string[]>([])
-  const [splitMode, setSplitMode] = useState<'heading' | 'paragraphs'>('heading')
+  const [splitMode] = useState<'heading' | 'paragraphs'>('heading')
   const [splitPptxMode, setSplitPptxMode] = useState<'all' | 'ranges' | 'every-n'>('all')
   const [splitPptxRanges, setSplitPptxRanges] = useState('1-2; 3')
   const [splitPptxEveryN, setSplitPptxEveryN] = useState(2)
@@ -187,15 +192,47 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [txtStyledHtml, setTxtStyledHtml] = useState(true)
 
   // Office & Word upgrades
-  const [wordEditMode, setWordEditMode] = useState<'editor' | 'replace'>('editor')
+  const [wordEditMode, setWordEditMode] = useState<'visual' | 'editor' | 'replace' | 'placeholders'>('visual')
+  const [wordVisualNodes, setWordVisualNodes] = useState<EditableDocxNode[]>([])
   const [wordFind, setWordFind] = useState('')
   const [wordReplace, setWordReplace] = useState('')
   const [wordMatchCase, setWordMatchCase] = useState(false)
+  const [wordWholeWord, setWordWholeWord] = useState(false)
+  const [wordUseRegex, setWordUseRegex] = useState(false)
   const [wordMatchCount, setWordMatchCount] = useState<number | null>(null)
+  const [wordMatchSnippets, setWordMatchSnippets] = useState<DocxMatchSnippet[]>([])
   const [wordReplaceRules, setWordReplaceRules] = useState<DocxReplaceRule[]>([])
+  const [wordPlaceholders, setWordPlaceholders] = useState<string[]>([])
+  const [wordPlaceholderValues, setWordPlaceholderValues] = useState<Record<string, string>>({})
+  const [docxPageActionMode, setDocxPageActionMode] = useState<'remove' | 'keep'>('remove')
+  const [splitWordOpts, setSplitWordOpts] = useState<SplitWordOpts>({
+    mode: 'heading',
+    perDoc: 15,
+    pagesPerDoc: 1,
+    nameByHeading: true,
+  })
+  const [mergeDocxSummaries, setMergeDocxSummaries] = useState<Record<number, DocxSummary>>({})
+  const [mergeWordIncludeToc, setMergeWordIncludeToc] = useState(false)
+  const [mergeWordImportStyles, setMergeWordImportStyles] = useState(true)
   const [officeMedia, setOfficeMedia] = useState<OfficeMediaSummary | null>(null)
   const [officeMediaQuality, setOfficeMediaQuality] = useState(68)
   const [officeMediaMaxEdge, setOfficeMediaMaxEdge] = useState(1600)
+  const [docxStripXmlBloat, setDocxStripXmlBloat] = useState(true)
+  const [docxStripComments, setDocxStripComments] = useState(false)
+  const [docxRemoveOrphans, setDocxRemoveOrphans] = useState(true)
+  const [docxConvertPngToJpeg, setDocxConvertPngToJpeg] = useState(true)
+  const [wordHtmlImageHandling, setWordHtmlImageHandling] = useState<'base64' | 'zip-folder' | 'strip'>('base64')
+  const [wordHtmlIncludeToc, setWordHtmlIncludeToc] = useState(true)
+  const [wordLiveHtmlPreview, setWordLiveHtmlPreview] = useState('')
+  const [wordExtractTarget, setWordExtractTarget] = useState<WordExtractTarget>('all')
+  const [wordLiveTextPreview, setWordLiveTextPreview] = useState('')
+  const [docxPdfPreviewPages, setDocxPdfPreviewPages] = useState<DocxPageInfo[]>([])
+  const [docIncludeHeadersFooters, setDocIncludeHeadersFooters] = useState(true)
+  const [docEmbedImages, setDocEmbedImages] = useState(true)
+  const [pdfDocxInfo, setPdfDocxInfo] = useState<PdfDocxPreviewInfo | null>(null)
+  const [pdfToDocxMode, setPdfToDocxMode] = useState<'editable' | 'hybrid' | 'snapshot'>('editable')
+  const [pdfToDocxPreserveAlign, setPdfToDocxPreserveAlign] = useState(true)
+  const [pdfToDocxPageBreaks, setPdfToDocxPageBreaks] = useState(true)
 
   // Upgrades: page numbers, watermark, icons, JSON, CSV, ZIP
   const [pdfNumFormat, setPdfNumFormat] = useState('Page {n} of {total}')
@@ -302,7 +339,9 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     setPdfAnnotations([]); setSignPlacements([]); setOfficeMedia(null); setZipSummary(null); setZipFilterNames([])
     setExcelPreview([]); setActivePreviewSheet(0); setSheetSel([]); setEstSizeBytes(null)
     setPdfTotalPages(null); setMergeFileRanges({}); setMergePageCounts({}); setWordReplaceRules([]); setWordMatchCount(null)
-    setPdfRepairDiag(null); setWordStats(null); setPdfToImgRange('')
+    setWordMatchSnippets([]); setWordPlaceholders([]); setWordPlaceholderValues({}); setWordVisualNodes([])
+    setMergeDocxSummaries({}); setWordLiveHtmlPreview(''); setWordLiveTextPreview(''); setDocxPdfPreviewPages([])
+    setPdfDocxInfo(null); setPdfRepairDiag(null); setWordStats(null); setPdfToImgRange('')
   }
 
   // Load image dimensions / metadata when the first file changes.
@@ -313,13 +352,60 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       import('../processing/text').then((m) => m.fileMetadata(first)).then((v) => { if (alive) setFileMeta(v) }).catch(() => { if (alive) setError('Could not read this file.') })
       return () => { alive = false }
     }
-    if (tool.id === 'edit-word' || tool.id === 'word-to-txt' || tool.id === 'extract-word-text') {
+    if (tool.id === 'edit-word' || tool.id === 'word-to-txt' || tool.id === 'extract-word-text' || tool.id === 'word-to-html') {
       import('../processing/office').then(async (m) => {
         const v = await m.wordExtractText(first)
         if (!alive) return
-        if (tool.id === 'edit-word') setEditText(v)
-        setWordStats(m.analyzeTextStats(v))
+        if (tool.id === 'edit-word') {
+          setEditText(v)
+          const ph = await m.detectDocxPlaceholders(first).catch(() => [] as string[])
+          if (alive) {
+            setWordPlaceholders(ph)
+            const initMap: Record<string, string> = {}
+            ph.forEach((tok) => { initMap[tok] = '' })
+            setWordPlaceholderValues(initMap)
+          }
+        }
+        const sum = await m.inspectDocxSummary(first).catch(() => null)
+        const baseStats = m.analyzeTextStats(v)
+        if (alive) {
+          setWordStats({
+            ...baseStats,
+            headingsCount: sum?.headings.length ?? 0,
+            tablesCount: sum?.tableCount ?? 0,
+            imagesCount: sum?.imageCount ?? 0,
+          })
+          setWordLiveTextPreview(v.slice(0, 8000))
+        }
+        if (tool.id === 'word-to-html') {
+          const htmlOut = await m.wordToHtml(first, { mode: 'clean' }).catch(() => null)
+          if (alive && htmlOut) {
+            const rawHtml = await htmlOut.blob.text()
+            setWordLiveHtmlPreview(rawHtml)
+          }
+        }
       }).catch(() => { if (alive && tool.id === 'edit-word') setError('Could not extract text — please use a .docx file.') })
+      return () => { alive = false }
+    }
+    if (tool.id === 'docx-to-pdf' || tool.id === 'word-to-pdf') {
+      import('../processing/office').then(async (m) => {
+        const [pages, media] = await Promise.all([
+          m.listDocxPages(first).catch(() => [] as DocxPageInfo[]),
+          m.inspectOfficeMedia(first).catch(() => null),
+        ])
+        if (!alive) return
+        setDocxPdfPreviewPages(pages)
+        if (media) setOfficeMedia(media)
+      })
+      return () => { alive = false }
+    }
+    if (tool.id === 'pdf-to-docx' || tool.id === 'pdf-to-word') {
+      import('../processing/advanced').then((m) => m.inspectPdfForDocx(first)).then((info) => {
+        if (alive) {
+          setPdfDocxInfo(info)
+          if (!info.hasSelectableText) setPdfToDocxMode('snapshot')
+        }
+      }).catch(() => {})
       return () => { alive = false }
     }
     if (tool.id === 'repair-pdf') {
@@ -367,8 +453,30 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     return () => { alive = false }
   }, [first]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Inspect page counts for all uploaded PDFs in merge-pdf
+  // Inspect page counts for all uploaded PDFs in merge-pdf, and DOCX summaries in merge-word
   useEffect(() => {
+    if (tool.id === 'merge-word' && files.length > 0) {
+      let alive = true
+      Promise.all(
+        files.map(async (f, idx) => {
+          try {
+            const { inspectDocxSummary } = await import('../processing/office')
+            const sum = await inspectDocxSummary(f.file)
+            return [idx, sum] as const
+          } catch {
+            return [idx, null] as const
+          }
+        })
+      ).then((entries) => {
+        if (!alive) return
+        const map: Record<number, DocxSummary> = {}
+        for (const [idx, sum] of entries) {
+          if (sum) map[idx] = sum
+        }
+        setMergeDocxSummaries(map)
+      })
+      return () => { alive = false }
+    }
     if (tool.id !== 'merge-pdf' || !files.length) return
     let alive = true
     Promise.all(
@@ -392,16 +500,30 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     return () => { alive = false }
   }, [files, tool.id])
 
-  // Live match counter for DOCX Find & Replace
+  // Live match counter & context snippets for DOCX Find & Replace
   useEffect(() => {
     if (tool.id !== 'edit-word' || wordEditMode !== 'replace' || !first || !wordFind.trim()) return
     let alive = true
     import('../processing/office')
-      .then((m) => m.countDocxMatches(first, wordFind, wordMatchCase))
-      .then((count) => { if (alive) setWordMatchCount(count) })
-      .catch(() => { if (alive) setWordMatchCount(null) })
+      .then((m) => m.previewDocxMatches(first, wordFind, {
+        matchCase: wordMatchCase,
+        wholeWord: wordWholeWord,
+        useRegex: wordUseRegex,
+      }))
+      .then((res) => {
+        if (alive) {
+          setWordMatchCount(res.count)
+          setWordMatchSnippets(res.snippets)
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setWordMatchCount(null)
+          setWordMatchSnippets([])
+        }
+      })
     return () => { alive = false }
-  }, [first, tool.id, wordEditMode, wordFind, wordMatchCase])
+  }, [first, tool.id, wordEditMode, wordFind, wordMatchCase, wordWholeWord, wordUseRegex])
 
   // Live compressed image size estimation when quality/format/maxEdge changes
   useEffect(() => {
@@ -551,9 +673,28 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           ownerPwd: ownerPwd.trim() || undefined,
           pdfAllowPrinting, pdfAllowCopying, pdfAllowModifying, pdfAllowAnnotating,
           blockSel, gridValue, ocrLang, ocrFormat, excelOrientation, excelGridlines,
-          wordEditMode, wordFind, wordReplace, wordMatchCase,
+          wordEditMode,
+          wordVisualNodes: wordVisualNodes.length ? wordVisualNodes : undefined,
+          wordFind, wordReplace, wordMatchCase, wordWholeWord, wordUseRegex,
           wordReplaceRules: wordReplaceRules.length ? wordReplaceRules : undefined,
+          wordPlaceholderValues: Object.keys(wordPlaceholderValues).length ? wordPlaceholderValues : undefined,
+          docxPageActionMode,
+          splitWordOpts,
+          mergeWordIncludeToc,
+          mergeWordImportStyles,
           officeMediaQuality, officeMediaMaxEdge,
+          docxStripXmlBloat,
+          docxStripComments,
+          docxRemoveOrphans,
+          docxConvertPngToJpeg,
+          wordHtmlImageHandling,
+          wordHtmlIncludeToc,
+          wordExtractTarget,
+          docIncludeHeadersFooters,
+          docEmbedImages,
+          pdfToDocxMode,
+          pdfToDocxPreserveAlign,
+          pdfToDocxPageBreaks,
           pdfNumFormat, pdfNumStart, pdfNumSize, pdfNumColor, pdfNumSkipCover,
           pdfNumFont, pdfNumStyle, pdfNumRange: pdfNumRange.trim() || undefined, pdfNumMargin,
           pdfWmAngle, pdfWmColor, pdfWmSize, pdfWmPos,
@@ -944,9 +1085,20 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
         {first && (tool.id === 'remove-word-pages' || tool.id === 'docx-page-remover') && (
           <div className="mt-6 border-t border-slate-100 pt-5">
-            <p className="mb-1.5 text-sm font-bold text-ink-950">Select pages or sections to remove</p>
-            <p className="mb-4 text-xs font-semibold text-slate-500">Pick pages visually or enter page ranges to remove from your Word document. Content is safely removed without affecting remaining styles.</p>
-            <Suspense fallback={<PickerFallback />}><DocxBlockPicker file={first} onChange={setBlockSel} /></Suspense>
+            <p className="mb-1.5 text-sm font-bold text-ink-950">
+              {docxPageActionMode === 'keep' ? 'Select pages or sections to keep (extract)' : 'Select pages or sections to remove'}
+            </p>
+            <p className="mb-4 text-xs font-semibold text-slate-500">
+              Inspect visual miniature pages, preview tables &amp; headings, or enter page ranges. Content is safely updated inside your DOCX while preserving styles, headers, footers, and embedded media.
+            </p>
+            <Suspense fallback={<PickerFallback />}>
+              <DocxBlockPicker
+                file={first}
+                onChange={setBlockSel}
+                actionMode={docxPageActionMode}
+                onActionModeChange={setDocxPageActionMode}
+              />
+            </Suspense>
           </div>
         )}
 
@@ -1032,27 +1184,109 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
         {tool.id === 'edit-word' && first && (
           <div className="mt-6 border-t border-slate-100 pt-5 space-y-4">
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 pb-2.5">
               <button
                 type="button"
-                onClick={() => setWordEditMode('editor')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${wordEditMode === 'editor' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                onClick={() => setWordEditMode('visual')}
+                className={`rounded-xl px-3 py-1.5 text-xs font-extrabold transition ${wordEditMode === 'visual' ? 'bg-accent text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
-                Full Text Editor (Markdown &amp; Tables)
+                In-Place Visual Block &amp; Table Editor
               </button>
               <button
                 type="button"
                 onClick={() => setWordEditMode('replace')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${wordEditMode === 'replace' ? 'bg-accent text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                className={`rounded-xl px-3 py-1.5 text-xs font-extrabold transition ${wordEditMode === 'replace' ? 'bg-accent text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
-                In-Place Find &amp; Replace (Preserves 100% Original Styling)
+                Find &amp; Replace with Context
+              </button>
+              <button
+                type="button"
+                onClick={() => setWordEditMode('placeholders')}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-extrabold transition ${wordEditMode === 'placeholders' ? 'bg-accent text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                <span>Template Placeholder Filler</span>
+                {wordPlaceholders.length > 0 && (
+                  <span className={`rounded-full px-1.5 py-0.2 text-[10px] ${wordEditMode === 'placeholders' ? 'bg-white text-accent' : 'bg-amber-100 text-amber-800'}`}>
+                    {wordPlaceholders.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWordEditMode('editor')}
+                className={`rounded-xl px-3 py-1.5 text-xs font-extrabold transition ${wordEditMode === 'editor' ? 'bg-accent text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                Markdown Text Rebuild
               </button>
             </div>
 
-            {wordEditMode === 'editor' ? (
+            {wordEditMode === 'visual' && (
+              <Suspense fallback={<PickerFallback />}>
+                <DocxVisualEditor file={first} onChange={setWordVisualNodes} />
+              </Suspense>
+            )}
+
+            {wordEditMode === 'placeholders' && (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-ink-950">Smart Contract &amp; Template Placeholder Auto-Filler</h3>
+                    <p className="text-xs text-slate-500">
+                      Automatically scans body text, headers, and footers for <code className="rounded bg-white px-1">{'{{TOKEN}}'}</code>, <code className="rounded bg-white px-1">[FIELD]</code>, or <code className="rounded bg-white px-1">&lt;TAG&gt;</code> variables and replaces them in-place while keeping 100% of original Word styling.
+                    </p>
+                  </div>
+                </div>
+
+                {wordPlaceholders.length > 0 ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {wordPlaceholders.map((tok) => (
+                      <label key={tok} className="block rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+                        <span className="mb-1 block font-mono text-xs font-extrabold text-accent">{tok}</span>
+                        <input
+                          type="text"
+                          value={wordPlaceholderValues[tok] ?? ''}
+                          onChange={(e) => setWordPlaceholderValues((prev) => ({ ...prev, [tok]: e.target.value }))}
+                          placeholder={`Enter value for ${tok}…`}
+                          className="input !py-1.5 text-xs"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+                    No bracketed placeholders like <code className="font-mono text-ink-950">{'{{CLIENT_NAME}}'}</code> or <code className="font-mono text-ink-950">[DATE]</code> were automatically detected in this document. You can add custom placeholder tokens below or use the <strong>Find &amp; Replace with Context</strong> tab.
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={wordFind}
+                    onChange={(e) => setWordFind(e.target.value)}
+                    placeholder="Add custom placeholder (e.g. {{COMPANY}})"
+                    className="input !py-1.5 max-w-xs font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t = wordFind.trim()
+                      if (!t) return
+                      if (!wordPlaceholders.includes(t)) setWordPlaceholders((prev) => [...prev, t])
+                      setWordPlaceholderValues((prev) => ({ ...prev, [t]: prev[t] ?? '' }))
+                      setWordFind('')
+                    }}
+                    className="rounded-xl border border-accent bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-white transition"
+                  >
+                    + Add Placeholder Field
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wordEditMode === 'editor' && (
               <div>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-bold text-ink-950">Document Text Editor</span>
+                  <span className="text-sm font-bold text-ink-950">Markdown Text Rebuild Editor</span>
                   <div className="flex items-center gap-3 text-xs font-semibold text-slate-500">
                     <span>{editText.split(/\s+/).filter(Boolean).length} words</span>
                     <span>·</span>
@@ -1070,9 +1304,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   <button type="button" onClick={() => setEditText('')} className="ml-auto rounded px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-50">Clear</button>
                 </div>
                 <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} className="input font-mono !text-[13px] leading-relaxed" placeholder="Extracting text…" />
-                <p className="mt-2 text-xs font-semibold text-amber-700">Supports Markdown headings (#, ##), **bold**, *italic*, bullets (-), and pipe tables (| a | b |). Need to keep original fonts, logos, and complex layouts intact? Switch to &quot;In-Place Find &amp; Replace&quot; above.</p>
+                <p className="mt-2 text-xs font-semibold text-amber-700">Rebuilds a fresh DOCX from Markdown (# headings, **bold**, *italic*, bullets, pipe tables). To preserve 100% of original fonts, images, and layouts, use &quot;In-Place Visual Block &amp; Table Editor&quot;.</p>
               </div>
-            ) : (
+            )}
+
+            {wordEditMode === 'replace' && (
               <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
@@ -1107,6 +1343,43 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </label>
                 </div>
 
+                <div className="flex flex-wrap items-center gap-5 pt-1 text-xs font-bold text-slate-700">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    Case-sensitive
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={wordWholeWord} onChange={(e) => setWordWholeWord(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    Whole words only
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={wordUseRegex} onChange={(e) => setWordUseRegex(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    Regular expression (Regex)
+                  </label>
+                </div>
+
+                {/* Live Context Match Snippets */}
+                {Boolean(wordFind.trim()) && wordMatchSnippets.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                    <span className="block text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
+                      Live Matches in Document Context ({wordMatchSnippets.length}{wordMatchCount && wordMatchCount > wordMatchSnippets.length ? ` of ${wordMatchCount}` : ''})
+                    </span>
+                    <ul className="max-h-40 space-y-1.5 overflow-y-auto text-xs">
+                      {wordMatchSnippets.map((sn, i) => (
+                        <li key={i} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-slate-600 ring-1 ring-slate-200/70">
+                          <span className="mr-2 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-extrabold text-blue-700">{sn.part}</span>
+                          <span>{sn.before}</span>
+                          <mark className="rounded bg-amber-200 px-1 font-extrabold text-ink-950">{sn.match}</mark>
+                          {wordReplace && (
+                            <span className="ml-1 rounded bg-emerald-100 px-1 font-extrabold text-emerald-800">→ {wordReplace}</span>
+                          )}
+                          <span>{sn.after}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {wordReplaceRules.length > 0 && (
                   <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
                     <div className="flex items-center justify-between text-xs font-bold text-ink-950">
@@ -1128,10 +1401,6 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </div>
                 )}
 
-                <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                  <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
-                  Case-sensitive match
-                </label>
                 <p className="text-xs text-slate-600">
                   Directly updates text runs inside <code className="rounded bg-white px-1 py-0.5">word/document.xml</code>, headers, and footers while preserving 100% of original fonts, tables, images, and page layout.
                 </p>
@@ -2164,7 +2433,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 </div>
               </div>
             )}
-            {tool.id === 'split-word' && <div>{sel('Split by', splitMode, setSplitMode, [['heading', 'Heading 1 sections'], ['paragraphs', 'Every 15 paragraphs']])}<p className="mt-2 text-xs text-slate-500">Word pagination depends on fonts and rendering, so splitting uses document structure — headings or paragraph blocks — never guessed page breaks.</p></div>}
+            {tool.id === 'split-word' && first && (
+              <Suspense fallback={<PickerFallback />}>
+                <DocxSplitStudio file={first} opts={splitWordOpts} onChange={setSplitWordOpts} />
+              </Suspense>
+            )}
             {(tool.id === 'txt-converter' || tool.id === 'markdown-converter' || tool.id === 'html-to-txt') && (
               <div className="space-y-4">
                 {tool.id !== 'html-to-txt' ? (
@@ -2592,63 +2865,202 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             )}
 
             {tool.id === 'merge-word' && (
-              <div className="space-y-3">
-                <div className="max-w-md">
+              <div className="space-y-4">
+                {Object.keys(mergeDocxSummaries).length > 0 && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                    <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                      Document Merge Queue Inspector ({files.length} DOCX file{files.length === 1 ? '' : 's'})
+                    </span>
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {files.map((f, idx) => {
+                        const sum = mergeDocxSummaries[idx]
+                        return (
+                          <div key={f.id} className="rounded-xl border border-slate-200 bg-white p-3 text-xs shadow-2xs">
+                            <div className="flex items-center justify-between gap-2 font-extrabold text-ink-950">
+                              <span className="truncate">#{idx + 1} · {f.file.name}</span>
+                              <span className="shrink-0 text-[10px] font-bold text-slate-400">{formatSize(f.file.size)}</span>
+                            </div>
+                            {sum ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
+                                <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">~{sum.pageCount} page{sum.pageCount === 1 ? '' : 's'}</span>
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">{sum.wordCount.toLocaleString()} words</span>
+                                {sum.tableCount > 0 && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">{sum.tableCount} tbl</span>}
+                                {sum.imageCount > 0 && <span className="rounded bg-teal-50 px-1.5 py-0.5 text-teal-700">{sum.imageCount} img</span>}
+                              </div>
+                            ) : (
+                              <span className="mt-1 block text-[10px] text-slate-400">Inspecting structure…</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-2">
                   {sel('Document Separator Between Merged Files', mergeWordSeparator, setMergeWordSeparator as never, [
                     ['page-break', 'Page Break (Start each file on a new page)'],
                     ['continuous', 'Continuous Flow (No page break between files)'],
                     ['filename-heading', 'Page Break + Filename Section Heading (H1)'],
                   ])}
+                  <div className="flex flex-col justify-end gap-2 pb-1 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={mergeWordIncludeToc}
+                        onChange={(e) => setMergeWordIncludeToc(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Generate automatic Table of Contents (TOC) cover page
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={mergeWordImportStyles}
+                        onChange={(e) => setMergeWordImportStyles(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Import missing paragraph &amp; heading styles from secondary files
+                    </label>
+                  </div>
                 </div>
-                <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order. You can reorder them in the file list above before merging.</p>
+                <p className="text-xs font-semibold text-slate-500">Documents are appended in upload order with automatic media relationship and style remapping.</p>
               </div>
             )}
+
             {tool.id === 'word-to-html' && (
-              <div className="max-w-md">
-                {sel('HTML Output Theme & Stylesheet', wordHtmlMode, setWordHtmlMode as never, [
-                  ['styled', 'Styled Light Theme (Responsive article & table CSS)'],
-                  ['clean', 'Clean Semantic HTML Only (No embedded CSS — ideal for CMS)'],
-                  ['dark', 'Dark Mode Reader Theme (High-contrast slate styling)'],
-                ])}
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('HTML Output Theme & Stylesheet', wordHtmlMode, setWordHtmlMode as never, [
+                    ['styled', 'Styled Light Theme (Responsive article & table CSS)'],
+                    ['clean', 'Clean Semantic HTML Only (No embedded CSS — ideal for CMS)'],
+                    ['dark', 'Dark Mode Reader Theme (High-contrast slate styling)'],
+                  ])}
+                  {sel('Embedded Image Handling', wordHtmlImageHandling, setWordHtmlImageHandling as never, [
+                    ['base64', 'Inline Base64 Data URLs (Single self-contained .html file)'],
+                    ['zip-folder', 'Separate /images Folder (.zip bundle with HTML + images)'],
+                    ['strip', 'Strip All Images (Text & tables only)'],
+                  ])}
+                </div>
+                {wordHtmlMode !== 'clean' && (
+                  <label className="flex items-center gap-2 text-xs font-bold text-ink-950">
+                    <input
+                      type="checkbox"
+                      checked={wordHtmlIncludeToc}
+                      onChange={(e) => setWordHtmlIncludeToc(e.target.checked)}
+                      className="h-4 w-4 accent-[#1D6FF2]"
+                    />
+                    Auto-generate clickable Table of Contents navigation box from document headings (H1–H3)
+                  </label>
+                )}
+
+                {wordLiveHtmlPreview && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                      <span>Instant Live HTML Render Preview</span>
+                      <span>{wordStats ? `${wordStats.words.toLocaleString()} words` : ''}</span>
+                    </div>
+                    <div
+                      className="max-h-64 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-800 shadow-inner prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: wordLiveHtmlPreview }}
+                    />
+                  </div>
+                )}
               </div>
             )}
+
             {(tool.id === 'word-to-txt' || tool.id === 'extract-word-text') && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {wordStats && (
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
                     {[
                       ['Words', wordStats.words.toLocaleString()],
                       ['Characters', wordStats.chars.toLocaleString()],
                       ['Paragraphs', wordStats.paragraphs.toLocaleString()],
                       ['Reading Time', `~${wordStats.readingTimeMin} min`],
+                      ['Headings', String(wordStats.headingsCount ?? 0)],
+                      ['Tables', String(wordStats.tablesCount ?? 0)],
+                      ['Images', String(wordStats.imagesCount ?? 0)],
                     ].map(([k, v]) => (
-                      <div key={k} className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2">
+                      <div key={k} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                         <div className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">{k}</div>
                         <div className="mt-0.5 text-sm font-extrabold text-ink-950">{v}</div>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex flex-wrap items-center gap-6 text-xs font-bold text-ink-950">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wordTxtMarkdown}
-                      onChange={(e) => setWordTxtMarkdown(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
-                    />
-                    Preserve Markdown headings (#), bullets (-), and pipe tables (| a | b |)
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={wordTxtCollapseBlank}
-                      onChange={(e) => setWordTxtCollapseBlank(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
-                    />
-                    Collapse consecutive empty lines
-                  </label>
-                </div>
+
+                {tool.id === 'extract-word-text' && (
+                  <div className="space-y-2">
+                    <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                      What to Extract from Word Document
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([
+                        ['all', 'Full Document Text'],
+                        ['headings', 'Headings Outline Only (.md)'],
+                        ['tables-md', 'All Tables as Markdown (.md)'],
+                        ['tables-csv', 'All Tables as Spreadsheets (.csv)'],
+                        ['links', 'All Hyperlinks & URLs (.txt)'],
+                        ['images', 'All Embedded Images (JPG/PNG)'],
+                      ] as const).map(([val, label]) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setWordExtractTarget(val)}
+                          className={`rounded-xl px-3 py-1.5 text-xs font-extrabold transition ${
+                            wordExtractTarget === val
+                              ? 'bg-accent text-white shadow-xs'
+                              : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(tool.id === 'word-to-txt' || wordExtractTarget === 'all') && (
+                  <div className="flex flex-wrap items-center gap-6 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={wordTxtMarkdown}
+                        onChange={(e) => setWordTxtMarkdown(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Preserve Markdown headings (#), **bold**, *italic*, bullets (-), and pipe tables (| a | b |)
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={wordTxtCollapseBlank}
+                        onChange={(e) => setWordTxtCollapseBlank(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Collapse consecutive empty lines
+                    </label>
+                  </div>
+                )}
+
+                {wordLiveTextPreview && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                      <span>Instant Extracted Text Preview</span>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(wordLiveTextPreview)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-accent hover:bg-slate-50"
+                      >
+                        <Copy className="h-3 w-3" /> Copy Text
+                      </button>
+                    </div>
+                    <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-3.5 font-mono text-xs leading-relaxed text-slate-700">
+                      {wordLiveTextPreview}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
             {tool.id === 'merge-presentations' && <p className="text-xs font-semibold text-slate-500">Slides are appended in upload order using the first deck&apos;s theme. Reorder your decks in the list above before processing.</p>}
@@ -2841,17 +3253,57 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
             {(tool.id === 'compress-docx' || tool.id === 'compress-powerpoint' || tool.id === 'compress-excel') && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {officeMedia && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs">
-                    <span className="font-bold text-ink-950">
-                      Embedded Media Inspector: <span className="text-accent">{officeMedia.count} image{officeMedia.count === 1 ? '' : 's'}</span> ({formatSize(officeMedia.mediaBytes)} of {formatSize(officeMedia.totalBytes)} package)
-                    </span>
-                    <span className="font-semibold text-slate-500">
-                      {officeMedia.count > 0 ? 'Images will be downscaled & recompressed' : 'XML streams will be DEFLATE-9 repacked'}
-                    </span>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-extrabold text-ink-950">
+                        OOXML Package Breakdown ({formatSize(officeMedia.totalBytes)} total)
+                      </span>
+                      <span className="font-semibold text-slate-500">
+                        {officeMedia.count > 0 ? `${officeMedia.count} embedded media file${officeMedia.count === 1 ? '' : 's'} detected` : 'XML-dominant package'}
+                      </span>
+                    </div>
+
+                    {/* Visual Byte Breakdown Bar */}
+                    {(() => {
+                      const rawTotal = Math.max(1, officeMedia.mediaBytes + officeMedia.xmlBytes + officeMedia.otherBytes)
+                      const mediaPct = Math.round((officeMedia.mediaBytes / rawTotal) * 100)
+                      const xmlPct = Math.round((officeMedia.xmlBytes / rawTotal) * 100)
+                      const otherPct = Math.max(0, 100 - mediaPct - xmlPct)
+                      return (
+                        <div className="space-y-1.5">
+                          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                            {mediaPct > 0 && <div className="bg-accent" style={{ width: `${mediaPct}%` }} title={`Media: ${mediaPct}%`} />}
+                            {xmlPct > 0 && <div className="bg-teal-500" style={{ width: `${xmlPct}%` }} title={`XML Document Streams: ${xmlPct}%`} />}
+                            {otherPct > 0 && <div className="bg-amber-400" style={{ width: `${otherPct}%` }} title={`Other Parts: ${otherPct}%`} />}
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-[11px] font-bold text-slate-600">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2.5 w-2.5 rounded-full bg-accent" />
+                              Media Images: {formatSize(officeMedia.mediaBytes)} ({mediaPct}%)
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2.5 w-2.5 rounded-full bg-teal-500" />
+                              Uncompressed XML: {formatSize(officeMedia.xmlBytes)} ({xmlPct}%)
+                            </span>
+                            {officeMedia.rsidCount > 0 && (
+                              <span className="text-amber-700">
+                                · {officeMedia.rsidCount.toLocaleString()} <code className="rounded bg-white px-1">w:rsid</code> revision tags
+                              </span>
+                            )}
+                            {officeMedia.orphanMediaCount > 0 && (
+                              <span className="text-red-700">
+                                · {officeMedia.orphanMediaCount} unreferenced orphan media
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
+
                 <div className="grid gap-4 sm:grid-cols-2">
                   {slider('Embedded Image Quality', officeMediaQuality, setOfficeMediaQuality, 30, 92, '%')}
                   {sel('Max Embedded Image Resolution', String(officeMediaMaxEdge), (v: string) => setOfficeMediaMaxEdge(+v), [
@@ -2861,6 +3313,48 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ['800', '800 px (Maximum Shrink)'],
                   ])}
                 </div>
+
+                {tool.id === 'compress-docx' && (
+                  <div className="grid gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 sm:grid-cols-2 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={docxStripXmlBloat}
+                        onChange={(e) => setDocxStripXmlBloat(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      <span>Strip <code className="rounded bg-white px-1">w:rsid</code> session IDs &amp; spellcheck proof markers</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={docxConvertPngToJpeg}
+                        onChange={(e) => setDocxConvertPngToJpeg(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      <span>Convert opaque PNG/BMP photos to compact JPEG</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={docxRemoveOrphans}
+                        onChange={(e) => setDocxRemoveOrphans(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      <span>Prune unreferenced orphan media files in <code className="rounded bg-white px-1">word/media</code></span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={docxStripComments}
+                        onChange={(e) => setDocxStripComments(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      <span>Accept tracked insertions &amp; strip deleted revisions/comments</span>
+                    </label>
+                  </div>
+                )}
+
                 <p className="text-xs text-slate-500">Recompresses embedded media inside <code className="rounded bg-slate-100 px-1">word/media</code>, <code className="rounded bg-slate-100 px-1">ppt/media</code>, or <code className="rounded bg-slate-100 px-1">xl/media</code> and repacks all XML parts at maximum DEFLATE level 9.</p>
               </div>
             )}
@@ -3102,7 +3596,67 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <p className="text-xs font-semibold text-slate-500">Attempts recovery by rebuilding the cross-reference table and copying valid pages into a clean PDF container.</p>
               </div>
             )}
-            {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && <p className="text-xs font-semibold text-slate-500">Reconstructs headings, bold text, bullet lists, and multi-column tables from selectable PDF text into an editable Word document.</p>}
+            {(tool.id === 'pdf-to-word' || tool.id === 'pdf-to-docx') && (
+              <div className="space-y-4">
+                {pdfDocxInfo && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2.5 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 font-extrabold text-ink-950">
+                      <span>Pre-Conversion PDF Layout Inspector</span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${
+                        pdfDocxInfo.hasSelectableText ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {pdfDocxInfo.hasSelectableText ? 'Selectable Vector Text Detected' : 'Scanned / Image-Only PDF (Using Snapshot Mode)'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">PDF Pages</span>
+                        <span className="text-sm font-extrabold text-ink-950">{pdfDocxInfo.pageCount}</span>
+                      </div>
+                      <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Selectable Words</span>
+                        <span className="text-sm font-extrabold text-ink-950">{pdfDocxInfo.wordCount.toLocaleString()}</span>
+                      </div>
+                      <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200/70">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Detected Tables</span>
+                        <span className="text-sm font-extrabold text-ink-950">{pdfDocxInfo.tableCount}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sel('DOCX Reconstruction Mode', pdfToDocxMode, setPdfToDocxMode as never, [
+                    ['editable', 'Editable Text & Tables Flow (Best for reports, contracts & resumes)'],
+                    ['hybrid', 'Hybrid Mode: Editable Text + Embedded Page Snapshots'],
+                    ['snapshot', 'Page Snapshot Mode (Exact visual page images inside DOCX — ideal for scans)'],
+                  ])}
+                  <div className="flex flex-col justify-end gap-2 pb-1 text-xs font-bold text-ink-950">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={pdfToDocxPreserveAlign}
+                        onChange={(e) => setPdfToDocxPreserveAlign(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Detect &amp; preserve centered titles and right-aligned text blocks
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={pdfToDocxPageBreaks}
+                        onChange={(e) => setPdfToDocxPageBreaks(e.target.checked)}
+                        className="h-4 w-4 accent-[#1D6FF2]"
+                      />
+                      Insert explicit Word page breaks between PDF pages
+                    </label>
+                  </div>
+                </div>
+                <p className="text-xs font-semibold text-slate-500">
+                  Reconstructs headings, bold text, centered/right alignments, bullet lists, and multi-column tables into an editable Word document.
+                </p>
+              </div>
+            )}
             {tool.id === 'pdf-to-excel' && (
               <div className="space-y-2.5">
                 <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-bold text-ink-950">
@@ -3134,14 +3688,16 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ['wide', 'Wide (72 pt / 1.0 in)'],
                   ])}
                 </div>
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2">
                   {sel('Typography Font Family', docFontFamily, setDocFontFamily as never, [
                     ['Helvetica', 'Helvetica (Clean Sans-Serif)'],
                     ['TimesRoman', 'Times Roman (Book Serif)'],
                     ['Courier', 'Courier (Monospace)'],
                   ])}
                   {slider('Body Font Size', docFontSize, setDocFontSize, 9, 16, ' pt')}
-                  <label className="flex items-center gap-2 pt-6 text-xs font-bold text-ink-950">
+                </div>
+                <div className="flex flex-wrap items-center gap-6 pt-1 text-xs font-bold text-ink-950">
+                  <label className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={docIncludePageNumbers}
@@ -3150,11 +3706,78 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     />
                     Stamp footer page numbers (Page X of Y)
                   </label>
+                  {tool.id !== 'epub-to-pdf' && (
+                    <>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={docEmbedImages}
+                          onChange={(e) => setDocEmbedImages(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        Render embedded DOCX images (<code className="rounded bg-slate-100 px-1">word/media/*</code>)
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={docIncludeHeadersFooters}
+                          onChange={(e) => setDocIncludeHeadersFooters(e.target.checked)}
+                          className="h-4 w-4 accent-[#1D6FF2]"
+                        />
+                        Include document headers &amp; footers
+                      </label>
+                    </>
+                  )}
                 </div>
+
+                {/* Live Paginated DOCX Preview before converting */}
+                {tool.id !== 'epub-to-pdf' && docxPdfPreviewPages.length > 0 && (
+                  <div className="space-y-2.5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-extrabold uppercase tracking-wide text-slate-500">
+                        Live Paginated Document Preview ({docxPdfPreviewPages.length} estimated page{docxPdfPreviewPages.length === 1 ? '' : 's'})
+                      </span>
+                      {officeMedia && officeMedia.count > 0 && (
+                        <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-[11px] font-extrabold text-teal-800">
+                          {officeMedia.count} embedded image{officeMedia.count === 1 ? '' : 's'} ready for PDF
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-3 overflow-x-auto pb-2">
+                      {docxPdfPreviewPages.slice(0, 8).map((p) => (
+                        <div key={p.pageNumber} className="w-48 shrink-0 rounded-xl border border-slate-200 bg-white p-3 shadow-xs flex flex-col justify-between h-52">
+                          <div className="space-y-1.5 overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-1 text-[10px] font-extrabold text-slate-400">
+                              <span>Page {p.pageNumber}</span>
+                              <span>{p.wordCount}w</span>
+                            </div>
+                            {p.items.slice(0, 4).map((it, idx) => (
+                              <div key={idx} className="text-[10px]">
+                                {it.kind === 'heading' ? (
+                                  <p className="truncate font-extrabold text-ink-950">{it.text}</p>
+                                ) : it.kind === 'table' ? (
+                                  <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 font-bold text-emerald-700">[Table]</span>
+                                ) : it.kind === 'image' ? (
+                                  <span className="inline-block rounded bg-teal-50 px-1.5 py-0.5 font-bold text-teal-700">{it.text}</span>
+                                ) : (
+                                  <p className="line-clamp-2 text-slate-600">{it.text}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="border-t border-slate-100 pt-1 text-center text-[9px] font-bold text-slate-400">
+                            {docIncludePageNumbers ? `Page ${p.pageNumber} of ${docxPdfPreviewPages.length}` : `— ${p.pageNumber} —`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-xs font-semibold text-slate-500">
                   {tool.id === 'epub-to-pdf'
                     ? 'Extracts chapters in spine reading order and renders headings, paragraphs, lists, and tables into a paginated PDF.'
-                    : 'Structured PDF flow: preserves headings, bold/italic text, bullet lists, and bordered tables from your DOCX.'}
+                    : 'Direct OOXML PDF flow: preserves headings, inline bold/italic/underline/color runs, alignments, numbered & bulleted lists, embedded images, headers/footers, and wrapped tables.'}
                 </p>
               </div>
             )}

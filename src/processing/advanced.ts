@@ -7,12 +7,25 @@ import { DOCX_TYPE, XLSX_TYPE, wordExtractText, wordToHtml } from './office'
 
 const pdfBlob = (bytes: Uint8Array) => new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' })
 
-export interface StructuredBlock {
-  kind: 'h1' | 'h2' | 'h3' | 'p' | 'li' | 'table'
-  text?: string
+export interface InlineTextSpan {
+  text: string
   bold?: boolean
   italic?: boolean
+  underline?: boolean
+  colorHex?: string
+}
+
+export interface StructuredBlock {
+  kind: 'h1' | 'h2' | 'h3' | 'p' | 'li' | 'table' | 'image' | 'page-break'
+  text?: string
+  spans?: InlineTextSpan[]
+  bold?: boolean
+  italic?: boolean
+  align?: 'left' | 'center' | 'right' | 'justify'
+  listMarker?: string
   rows?: string[][]
+  imageBytes?: Uint8Array
+  imageMime?: 'image/png' | 'image/jpeg'
 }
 
 /** Parse HTML (from mammoth or EPUB XHTML) into structured blocks for rich PDF layout. */
@@ -22,15 +35,72 @@ export function htmlToStructuredBlocks(html: string): StructuredBlock[] {
   doc.querySelectorAll('script,style,noscript').forEach((el) => el.remove())
   const blocks: StructuredBlock[] = []
 
+  const extractInlineSpans = (root: Node, state: { bold?: boolean; italic?: boolean; underline?: boolean } = {}): InlineTextSpan[] => {
+    const spans: InlineTextSpan[] = []
+    for (const child of Array.from(root.childNodes)) {
+      if (child.nodeType === 3) {
+        const txt = child.textContent ?? ''
+        if (txt) spans.push({ text: txt, ...state })
+      } else if (child.nodeType === 1) {
+        const el = child as Element
+        const tag = el.tagName.toLowerCase()
+        const nextState = {
+          bold: state.bold || tag === 'strong' || tag === 'b',
+          italic: state.italic || tag === 'em' || tag === 'i',
+          underline: state.underline || tag === 'u' || tag === 'a',
+        }
+        spans.push(...extractInlineSpans(el, nextState))
+      }
+    }
+    return spans
+  }
+
+  const decodeDataUrlImage = (src: string): { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' } | null => {
+    const m = src.match(/^data:(image\/(?:png|jpe?g));base64,(.+)$/i)
+    if (!m) return null
+    try {
+      const mime = m[1].toLowerCase() === 'image/png' ? 'image/png' : 'image/jpeg'
+      const b64 = m[2]
+      const binStr = typeof atob === 'function' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary')
+      const bytes = new Uint8Array(binStr.length)
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i)
+      return { bytes, mime }
+    } catch {
+      return null
+    }
+  }
+
   const walk = (root: Element | DocumentFragment) => {
     for (const child of Array.from(root.children)) {
       const tag = child.tagName.toLowerCase()
+      if (tag === 'img') {
+        const decoded = decodeDataUrlImage(child.getAttribute('src') ?? '')
+        if (decoded) blocks.push({ kind: 'image', imageBytes: decoded.bytes, imageMime: decoded.mime })
+        continue
+      }
+      child.querySelectorAll('img').forEach((imgEl) => {
+        const decoded = decodeDataUrlImage(imgEl.getAttribute('src') ?? '')
+        if (decoded) blocks.push({ kind: 'image', imageBytes: decoded.bytes, imageMime: decoded.mime })
+      })
+
       if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
         const t = (child.textContent ?? '').replace(/\s+/g, ' ').trim()
         if (t) blocks.push({ kind: tag as 'h1' | 'h2' | 'h3', text: t, bold: true })
+      } else if (tag === 'ol' || tag === 'ul') {
+        Array.from(child.children).forEach((li, idx) => {
+          const t = (li.textContent ?? '').replace(/\s+/g, ' ').trim()
+          if (t) {
+            blocks.push({
+              kind: 'li',
+              text: t,
+              spans: extractInlineSpans(li),
+              listMarker: tag === 'ol' ? `${idx + 1}.` : '-',
+            })
+          }
+        })
       } else if (tag === 'li') {
         const t = (child.textContent ?? '').replace(/\s+/g, ' ').trim()
-        if (t) blocks.push({ kind: 'li', text: t })
+        if (t) blocks.push({ kind: 'li', text: t, spans: extractInlineSpans(child) })
       } else if (tag === 'table') {
         const rows: string[][] = []
         child.querySelectorAll('tr').forEach((tr) => {
@@ -43,7 +113,13 @@ export function htmlToStructuredBlocks(html: string): StructuredBlock[] {
         if (t) {
           const onlyStrong = child.children.length === 1 && /^(STRONG|B)$/i.test(child.children[0].tagName)
           const onlyEm = child.children.length === 1 && /^(EM|I)$/i.test(child.children[0].tagName)
-          blocks.push({ kind: 'p', text: t, bold: onlyStrong, italic: onlyEm })
+          blocks.push({
+            kind: 'p',
+            text: t,
+            spans: extractInlineSpans(child),
+            bold: onlyStrong,
+            italic: onlyEm,
+          })
         }
       } else if (child.children.length > 0) {
         walk(child)
@@ -76,9 +152,13 @@ export interface DocLayoutOpts {
   fontSize?: number
   margin?: 'compact' | 'standard' | 'wide'
   includePageNumbers?: boolean
+  includeHeadersFooters?: boolean
+  embedImages?: boolean
+  headerText?: string
+  footerText?: string
 }
 
-/** Render structured blocks (headings, paragraphs, lists, and bordered tables) into a multi-page PDF. */
+/** Render structured blocks (headings, inline styled paragraphs, lists, embedded images, and wrapped tables) into a multi-page PDF. */
 export async function blocksToPdf(blocks: StructuredBlock[], title: string, opts?: DocLayoutOpts): Promise<Blob> {
   const doc = await PDFDocument.create()
   const fam = opts?.fontFamily ?? 'Helvetica'
@@ -90,6 +170,9 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string, opts
   )
   const italic = await doc.embedFont(
     fam === 'TimesRoman' ? StandardFonts.TimesRomanItalic : fam === 'Courier' ? StandardFonts.CourierOblique : StandardFonts.HelveticaOblique
+  )
+  const boldItalic = await doc.embedFont(
+    fam === 'TimesRoman' ? StandardFonts.TimesRomanBoldItalic : fam === 'Courier' ? StandardFonts.CourierBoldOblique : StandardFonts.HelveticaBoldOblique
   )
 
   const baseW = opts?.pageSize === 'letter' ? 612 : 595.28
@@ -127,34 +210,84 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string, opts
   }
 
   for (const b of blocks) {
+    if (b.kind === 'page-break') {
+      if (y < H - M - 10) newPage()
+      continue
+    }
+
+    if (b.kind === 'image' && b.imageBytes && opts?.embedImages !== false) {
+      try {
+        const embedded = b.imageMime === 'image/png'
+          ? await doc.embedPng(b.imageBytes)
+          : await doc.embedJpg(b.imageBytes)
+        const maxImgW = Math.min(contentW, 420)
+        const maxImgH = Math.min(H - M * 2 - 40, 260)
+        const scale = Math.min(1, maxImgW / Math.max(1, embedded.width), maxImgH / Math.max(1, embedded.height))
+        const dw = Math.max(16, embedded.width * scale)
+        const dh = Math.max(16, embedded.height * scale)
+        ensureSpace(dh + 14)
+        const ix = b.align === 'center' ? M + (contentW - dw) / 2 : b.align === 'right' ? M + contentW - dw : M
+        page.drawImage(embedded, { x: ix, y: y - dh + 6, width: dw, height: dh })
+        y -= dh + 12
+      } catch {
+        // Ignore unsupported image stream
+      }
+      continue
+    }
+
     if (b.kind === 'table' && b.rows && b.rows.length > 0) {
       const colCount = Math.max(1, ...b.rows.map((r) => r.length))
-      const colW = contentW / colCount
-      const rowH = 20
+      // Compute proportional column widths from cell content length
+      const weights = Array.from({ length: colCount }, (_, ci) => {
+        const maxLen = Math.max(6, ...b.rows!.slice(0, 50).map((r) => safePdfText(r[ci] ?? '').length))
+        return Math.min(45, maxLen + 2)
+      })
+      const totalWeight = weights.reduce((a, c) => a + c, 0) || 1
+      const colWidths = weights.map((w) => (w / totalWeight) * contentW)
+
       y -= 4
       for (let ri = 0; ri < b.rows.length; ri++) {
-        ensureSpace(rowH + 6)
         const isHeader = ri === 0
+        const cellFont = isHeader ? bold : font
+        const cellFontSize = 9.5
+        const wrappedCells = Array.from({ length: colCount }, (_, ci) => {
+          const cw = colWidths[ci]
+          const rawCell = safePdfText(b.rows![ri][ci] ?? '')
+          return rawCell ? wrap(rawCell, cellFont, cellFontSize, Math.max(18, cw - 10)).slice(0, 4) : ['']
+        })
+        const maxLines = Math.max(1, ...wrappedCells.map((lines) => lines.length))
+        const rowH = Math.max(20, maxLines * 12 + 8)
+
+        ensureSpace(rowH + 6)
         if (isHeader) {
           page.drawRectangle({ x: M, y: y - rowH + 5, width: contentW, height: rowH, color: rgb(0.93, 0.95, 0.98) })
+        } else if (ri % 2 === 1) {
+          page.drawRectangle({ x: M, y: y - rowH + 5, width: contentW, height: rowH, color: rgb(0.98, 0.985, 0.995) })
         }
+        let cx = M
         for (let ci = 0; ci < colCount; ci++) {
-          const cx = M + ci * colW
+          const cw = colWidths[ci]
           page.drawRectangle({
             x: cx,
             y: y - rowH + 5,
-            width: colW,
+            width: cw,
             height: rowH,
             borderColor: rgb(0.78, 0.82, 0.88),
             borderWidth: 0.6,
           })
-          const cellText = safePdfText(b.rows[ri][ci] ?? '')
-          const f = isHeader ? bold : font
-          const maxChars = Math.max(4, Math.floor((colW - 10) / 5.2))
-          const clipped = cellText.length > maxChars ? cellText.slice(0, maxChars - 1) + '...' : cellText
-          if (clipped) {
-            page.drawText(clipped, { x: cx + 5, y: y - 9, size: 9.5, font: f, color: rgb(0.12, 0.15, 0.22) })
-          }
+          const cellLines = wrappedCells[ci]
+          cellLines.forEach((ln, li) => {
+            if (ln) {
+              page.drawText(ln, {
+                x: cx + 5,
+                y: y - 9 - li * 12,
+                size: cellFontSize,
+                font: cellFont,
+                color: rgb(0.12, 0.15, 0.22),
+              })
+            }
+          })
+          cx += cw
         }
         y -= rowH
       }
@@ -169,31 +302,131 @@ export async function blocksToPdf(blocks: StructuredBlock[], title: string, opts
     const isList = b.kind === 'li'
     const size = isH1 ? bodySize + 6 : isH2 ? bodySize + 3 : isH3 ? bodySize + 1.5 : bodySize
     const f = isH1 || isH2 || isH3 || b.bold ? bold : b.italic ? italic : font
-    const indent = isList ? 16 : 0
+    const indent = isList ? 18 : 0
     const lineStep = isH1 ? size + 7 : isH2 ? size + 6 : size + 5
 
     if (isH1 || isH2) y -= 6
+
+    // Check if paragraph has multi-style inline spans
+    const hasRichSpans = b.spans && b.spans.length > 0 && b.spans.some((s) => s.bold || s.italic || s.underline || s.colorHex)
+    if (hasRichSpans && !isH1 && !isH2 && !isH3) {
+      // Tokenize spans into words with style metadata and flow across lines
+      const tokens: { word: string; spaceAfter: boolean; bold?: boolean; italic?: boolean; underline?: boolean; colorHex?: string }[] = []
+      for (const sp of b.spans!) {
+        const cleaned = safePdfText(sp.text)
+        const parts = cleaned.match(/\S+|\s+/g) ?? []
+        for (let pi = 0; pi < parts.length; pi++) {
+          const tok = parts[pi]
+          if (/^\s+$/.test(tok)) {
+            if (tokens.length > 0) tokens[tokens.length - 1].spaceAfter = true
+          } else {
+            tokens.push({
+              word: tok,
+              spaceAfter: false,
+              bold: sp.bold ?? b.bold,
+              italic: sp.italic ?? b.italic,
+              underline: sp.underline,
+              colorHex: sp.colorHex,
+            })
+          }
+        }
+      }
+
+      const pickFont = (isB?: boolean, isI?: boolean) => (isB && isI ? boldItalic : isB ? bold : isI ? italic : font)
+      const availW = contentW - indent
+      const linesOfTokens: (typeof tokens)[] = []
+      let curLine: typeof tokens = []
+      let curW = 0
+
+      for (const tk of tokens) {
+        const tf = pickFont(tk.bold, tk.italic)
+        const w = tf.widthOfTextAtSize(tk.word + (tk.spaceAfter ? ' ' : ''), size)
+        if (curLine.length > 0 && curW + tf.widthOfTextAtSize(tk.word, size) > availW) {
+          linesOfTokens.push(curLine)
+          curLine = [tk]
+          curW = w
+        } else {
+          curLine.push(tk)
+          curW += w
+        }
+      }
+      if (curLine.length > 0) linesOfTokens.push(curLine)
+
+      linesOfTokens.forEach((lineTokens, li) => {
+        ensureSpace(lineStep)
+        if (isList && li === 0) {
+          page.drawText(b.listMarker || '-', { x: M + 2, y, size, font: bold, color: rgb(0.15, 0.35, 0.75) })
+        }
+        const totalLineW = lineTokens.reduce((sum, tk, idx) => {
+          const tf = pickFont(tk.bold, tk.italic)
+          return sum + tf.widthOfTextAtSize(tk.word + (tk.spaceAfter && idx < lineTokens.length - 1 ? ' ' : ''), size)
+        }, 0)
+        let tx = M + indent
+        if (b.align === 'center') tx = M + indent + Math.max(0, (availW - totalLineW) / 2)
+        else if (b.align === 'right') tx = M + indent + Math.max(0, availW - totalLineW)
+
+        lineTokens.forEach((tk, idx) => {
+          const tf = pickFont(tk.bold, tk.italic)
+          const col = tk.colorHex && /^#?[0-9a-fA-F]{6}$/.test(tk.colorHex)
+            ? parseHexColor(tk.colorHex)
+            : rgb(0.1, 0.12, 0.18)
+          page.drawText(tk.word, { x: tx, y, size, font: tf, color: col })
+          const wordW = tf.widthOfTextAtSize(tk.word, size)
+          if (tk.underline) {
+            page.drawLine({
+              start: { x: tx, y: y - 1.5 },
+              end: { x: tx + wordW, y: y - 1.5 },
+              thickness: 0.7,
+              color: col,
+            })
+          }
+          const adv = tf.widthOfTextAtSize(tk.word + (tk.spaceAfter && idx < lineTokens.length - 1 ? ' ' : ''), size)
+          tx += adv
+        })
+        y -= lineStep
+      })
+      y -= 3
+      continue
+    }
+
     const wrapped = wrap(rawText, f, size, contentW - indent)
     wrapped.forEach((ln, li) => {
       ensureSpace(lineStep)
       if (isList && li === 0) {
-        page.drawText('-', { x: M + 4, y, size, font: bold, color: rgb(0.15, 0.35, 0.75) })
+        page.drawText(b.listMarker || '-', { x: M + 2, y, size, font: bold, color: rgb(0.15, 0.35, 0.75) })
       }
       if (ln) {
-        page.drawText(ln, { x: M + indent, y, size, font: f, color: rgb(0.1, 0.12, 0.18) })
+        const lw = f.widthOfTextAtSize(ln, size)
+        const availW = contentW - indent
+        let tx = M + indent
+        if (b.align === 'center') tx = M + indent + Math.max(0, (availW - lw) / 2)
+        else if (b.align === 'right') tx = M + indent + Math.max(0, availW - lw)
+        page.drawText(ln, { x: tx, y, size, font: f, color: rgb(0.1, 0.12, 0.18) })
       }
       y -= lineStep
     })
     y -= isH1 || isH2 ? 4 : 3
   }
 
-  if (opts?.includePageNumbers) {
-    const pages = doc.getPages()
-    const total = pages.length
+  const pages = doc.getPages()
+  const total = pages.length
+  const hdrClean = opts?.includeHeadersFooters !== false && opts?.headerText ? safePdfText(opts.headerText).slice(0, 90) : ''
+  const ftrClean = opts?.includeHeadersFooters !== false && opts?.footerText ? safePdfText(opts.footerText).slice(0, 90) : ''
+
+  if (opts?.includePageNumbers || hdrClean || ftrClean) {
     pages.forEach((p, idx) => {
-      const label = `Page ${idx + 1} of ${total}`
-      const lw = font.widthOfTextAtSize(label, 9)
-      p.drawText(label, { x: (W - lw) / 2, y: Math.max(14, M / 2 - 4), size: 9, font, color: rgb(0.45, 0.5, 0.58) })
+      if (hdrClean) {
+        p.drawText(hdrClean, { x: M, y: H - Math.max(18, M / 2), size: 8.5, font, color: rgb(0.45, 0.5, 0.58) })
+      }
+      if (ftrClean) {
+        p.drawText(ftrClean, { x: M, y: Math.max(14, M / 2 - 4), size: 8.5, font, color: rgb(0.45, 0.5, 0.58) })
+      }
+      if (opts?.includePageNumbers) {
+        const label = `Page ${idx + 1} of ${total}`
+        const lw = font.widthOfTextAtSize(label, 9)
+        const px = ftrClean ? W - M - lw : (W - lw) / 2
+        p.drawText(label, { x: px, y: Math.max(14, M / 2 - 4), size: 9, font, color: rgb(0.45, 0.5, 0.58) })
+      }
     })
   }
 
@@ -558,19 +791,106 @@ export async function repairPdf(file: File): Promise<OutputFile> {
   return { name: `${stem(file.name)}-repaired.pdf`, blob: pdfBlob(out) }
 }
 
-// ── PDF → Word (style & table-aware rebuild; disclosed in UI) ─────────────
-export async function pdfToDocx(file: File): Promise<OutputFile> {
-  const pages = await extractTextPages(await file.arrayBuffer())
-  if (!pages.some((p) => p.lines.length)) throw new Error('No selectable text found. Scanned or image-only PDFs need OCR — please use the "OCR PDF to Text" tool to extract text or convert to a searchable document.')
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak, Table, TableRow, TableCell, WidthType } = await import('docx')
+export interface PdfToDocxOpts {
+  mode?: 'editable' | 'hybrid' | 'snapshot'
+  preserveAlignment?: boolean
+  includePageBreaks?: boolean
+}
+
+export interface PdfDocxPreviewInfo {
+  pageCount: number
+  wordCount: number
+  tableCount: number
+  hasSelectableText: boolean
+  sampleLines: string[]
+}
+
+/** Pre-inspect a PDF file for PDF-to-DOCX conversion: reports page count, word count, table count, and selectable text status. */
+export async function inspectPdfForDocx(file: File): Promise<PdfDocxPreviewInfo> {
+  const buf = await file.arrayBuffer()
+  const pages = await extractTextPages(buf)
+  let wordCount = 0
+  let tableCount = 0
+  const sampleLines: string[] = []
+
+  for (const p of pages) {
+    let inTable = 0
+    for (const ln of p.richLines ?? []) {
+      if (ln.cells && ln.cells.length >= 2) {
+        inTable++
+      } else {
+        if (inTable >= 2) tableCount++
+        inTable = 0
+      }
+    }
+    if (inTable >= 2) tableCount++
+
+    for (const line of p.lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      wordCount += trimmed.split(/\s+/).filter(Boolean).length
+      if (sampleLines.length < 6) sampleLines.push(trimmed.slice(0, 100))
+    }
+  }
+
+  return {
+    pageCount: pages.length,
+    wordCount,
+    tableCount,
+    hasSelectableText: wordCount > 0,
+    sampleLines,
+  }
+}
+
+// ── PDF → Word (style, alignment, table, and hybrid/snapshot page image rebuild) ─────────────
+export async function pdfToDocx(file: File, opts?: PdfToDocxOpts): Promise<OutputFile> {
+  const buf = await file.arrayBuffer()
+  const pages = await extractTextPages(buf)
+  const mode = opts?.mode ?? 'editable'
+  const preserveAlign = opts?.preserveAlignment !== false
+  const includeBreaks = opts?.includePageBreaks !== false
+
+  const hasText = pages.some((p) => p.lines.length > 0)
+  if (!hasText && mode === 'editable') {
+    throw new Error('No selectable text found. Scanned or image-only PDFs need OCR — switch to "Page Snapshot Mode" above or use the "OCR PDF to Text" tool.')
+  }
+
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak, Table, TableRow, TableCell, WidthType, AlignmentType, ImageRun } = await import('docx')
   const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = []
 
   // Estimate body font size across document to detect headings
   const allFontSizes = pages.flatMap((p) => (p.richLines ?? []).map((l) => l.fontSize)).sort((a, b) => a - b)
   const bodySize = allFontSizes.length ? allFontSizes[Math.floor(allFontSizes.length / 2)] : 11
 
-  pages.forEach((p, pi) => {
-    if (pi > 0) children.push(new Paragraph({ children: [new PageBreak()] }))
+  for (let pi = 0; pi < pages.length; pi++) {
+    const p = pages[pi]
+    if (pi > 0 && includeBreaks) {
+      children.push(new Paragraph({ children: [new PageBreak()] }))
+    }
+
+    if (mode === 'snapshot' || mode === 'hybrid') {
+      if (typeof document !== 'undefined') {
+        try {
+          const snap = await renderPageJpeg(buf, pi + 1, 1.75)
+          const targetW = 500
+          const targetH = Math.max(80, Math.round((snap.pageHeight / Math.max(1, snap.pageWidth)) * targetW))
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new ImageRun({
+                data: snap.jpeg,
+                transformation: { width: targetW, height: targetH },
+                type: 'jpg',
+              }),
+            ],
+          }))
+        } catch {
+          // Fallback to text flow if canvas rasterization is unavailable
+        }
+      }
+      if (mode === 'snapshot') continue
+    }
+
     const rich = p.richLines?.length
       ? p.richLines
       : p.lines.map((t) => ({ text: t, fontSize: bodySize, isBold: false, x: 50, y: 0, pageWidth: 595, pageHeight: 842, cells: [t] }))
@@ -607,10 +927,23 @@ export async function pdfToDocx(file: File): Promise<OutputFile> {
       const isH2 = !isH1 && line.fontSize >= bodySize + 2.5
       const isBullet = /^[•\-*▪]\s+/.test(line.text)
 
+      // Detect centered or right-aligned lines from horizontal X offset and estimated text width
+      let alignment: (typeof AlignmentType)[keyof typeof AlignmentType] | undefined
+      if (preserveAlign && line.pageWidth > 0) {
+        const estWidth = line.text.length * line.fontSize * 0.5
+        const lineCenter = line.x + estWidth / 2
+        const pageCenter = line.pageWidth / 2
+        if (line.x > line.pageWidth * 0.55) {
+          alignment = AlignmentType.RIGHT
+        } else if (line.x > line.pageWidth * 0.16 && Math.abs(lineCenter - pageCenter) < line.pageWidth * 0.14) {
+          alignment = AlignmentType.CENTER
+        }
+      }
+
       if (isH1) {
-        children.push(new Paragraph({ text: line.text, heading: HeadingLevel.HEADING_1 }))
+        children.push(new Paragraph({ text: line.text, heading: HeadingLevel.HEADING_1, alignment }))
       } else if (isH2) {
-        children.push(new Paragraph({ text: line.text, heading: HeadingLevel.HEADING_2 }))
+        children.push(new Paragraph({ text: line.text, heading: HeadingLevel.HEADING_2, alignment }))
       } else if (isBullet) {
         children.push(new Paragraph({
           text: line.text.replace(/^[•\-*▪]\s+/, ''),
@@ -618,12 +951,13 @@ export async function pdfToDocx(file: File): Promise<OutputFile> {
         }))
       } else {
         children.push(new Paragraph({
+          alignment,
           children: [new TextRun({ text: line.text, bold: line.isBold })],
         }))
       }
     })
     flushTable()
-  })
+  }
 
   const docFile = new Document({ sections: [{ children: children.length ? children : [new Paragraph('')] }] })
   const blob = await Packer.toBlob(docFile)
@@ -725,8 +1059,180 @@ export async function pdfToPowerpoint(
   }
 }
 
-// ── Word → PDF (structured HTML-to-PDF with headings, lists & tables; disclosed in UI) ──
+// ── Direct OOXML DOCX → Structured Blocks parser (preserves inline runs, alignment, images, headers/footers, & tables) ──
+export async function parseDocxRichBlocks(
+  file: File,
+): Promise<{ blocks: StructuredBlock[]; headerText?: string; footerText?: string }> {
+  if (typeof DOMParser === 'undefined') return { blocks: [] }
+  const { default: JSZip } = await import('jszip')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const docEntry = zip.file('word/document.xml')
+  if (!docEntry) return { blocks: [] }
+
+  const parseXml = (xml: string) => new DOMParser().parseFromString(xml, 'application/xml')
+  const doc = parseXml(await docEntry.async('string'))
+  const body = doc.querySelector('body')
+  if (!body) return { blocks: [] }
+
+  // Map relationship IDs to media image paths in word/media/*
+  const relIdToPath = new Map<string, string>()
+  const relsEntry = zip.file('word/_rels/document.xml.rels')
+  if (relsEntry) {
+    const relsDoc = parseXml(await relsEntry.async('string'))
+    relsDoc.querySelectorAll('Relationship').forEach((r) => {
+      const id = r.getAttribute('Id')
+      const target = r.getAttribute('Target') ?? ''
+      if (id && /\.(png|jpe?g)$/i.test(target)) {
+        const clean = target.startsWith('../') ? target.slice(3) : `word/${target.replace(/^\/+/, '')}`
+        relIdToPath.set(id, clean)
+      }
+    })
+  }
+
+  // Extract header & footer text if present
+  let headerText: string | undefined
+  let footerText: string | undefined
+  const hdrName = Object.keys(zip.files).find((p) => /^word\/header\d*\.xml$/i.test(p))
+  if (hdrName) {
+    const hDoc = parseXml(await zip.file(hdrName)!.async('string'))
+    const hTxt = Array.from(hDoc.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
+    if (hTxt) headerText = hTxt
+  }
+  const ftrName = Object.keys(zip.files).find((p) => /^word\/footer\d*\.xml$/i.test(p))
+  if (ftrName) {
+    const fDoc = parseXml(await zip.file(ftrName)!.async('string'))
+    const fTxt = Array.from(fDoc.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
+    if (fTxt) footerText = fTxt
+  }
+
+  const blocks: StructuredBlock[] = []
+  let numListCounter = 0
+
+  for (const el of Array.from(body.children)) {
+    if (el.tagName === 'w:tbl') {
+      numListCounter = 0
+      const rows: string[][] = []
+      Array.from(el.getElementsByTagName('w:tr')).forEach((tr) => {
+        const cells = Array.from(tr.getElementsByTagName('w:tc')).map((tc) =>
+          Array.from(tc.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
+        )
+        if (cells.some(Boolean)) rows.push(cells)
+      })
+      if (rows.length > 0) blocks.push({ kind: 'table', rows })
+      continue
+    }
+
+    if (el.tagName !== 'w:p') continue
+
+    const style = el.querySelector('pStyle')?.getAttribute('w:val') ?? ''
+    const jcRaw = el.querySelector('jc')?.getAttribute('w:val') ?? ''
+    const align: StructuredBlock['align'] = jcRaw === 'center' ? 'center' : jcRaw === 'right' ? 'right' : jcRaw === 'both' ? 'justify' : 'left'
+    const numPr = el.querySelector('numPr')
+
+    // Check for explicit page break before or inside paragraph
+    if (el.getElementsByTagName('w:pageBreakBefore').length > 0) {
+      blocks.push({ kind: 'page-break' })
+    }
+
+    // Check for embedded images inside this paragraph (<a:blip r:embed="rId..."/>)
+    const blips = Array.from(el.getElementsByTagName('a:blip'))
+    for (const blip of blips) {
+      const rid = blip.getAttribute('r:embed') ?? blip.getAttribute('embed')
+      const mediaPath = rid ? relIdToPath.get(rid) : undefined
+      if (mediaPath && zip.file(mediaPath)) {
+        const bytes = await zip.file(mediaPath)!.async('uint8array')
+        const isPng = /\.png$/i.test(mediaPath)
+        blocks.push({
+          kind: 'image',
+          imageBytes: bytes,
+          imageMime: isPng ? 'image/png' : 'image/jpeg',
+          align,
+        })
+      }
+    }
+
+    const spans: InlineTextSpan[] = []
+    let hasExplicitBreakAfter = false
+
+    for (const r of Array.from(el.getElementsByTagName('w:r'))) {
+      const brs = Array.from(r.getElementsByTagName('w:br'))
+      if (brs.some((b) => b.getAttribute('w:type') === 'page' || b.getAttribute('type') === 'page')) {
+        hasExplicitBreakAfter = true
+      }
+      const rTxt = Array.from(r.getElementsByTagName('w:t')).map((t) => t.textContent ?? '').join('')
+      if (!rTxt) continue
+      const rPr = r.querySelector('rPr')
+      const isBold = Boolean(rPr?.querySelector('b'))
+      const isItalic = Boolean(rPr?.querySelector('i'))
+      const isUnderline = Boolean(rPr?.querySelector('u'))
+      const colVal = rPr?.querySelector('color')?.getAttribute('w:val')
+      const colorHex = colVal && /^[0-9a-fA-F]{6}$/.test(colVal) && colVal.toLowerCase() !== 'auto' ? `#${colVal}` : undefined
+      spans.push({
+        text: rTxt,
+        bold: isBold,
+        italic: isItalic,
+        underline: isUnderline,
+        colorHex,
+      })
+    }
+
+    const fullText = spans.map((s) => s.text).join('').replace(/\s+/g, ' ').trim()
+    if (fullText) {
+      const isH1 = /Heading1|Title/i.test(style)
+      const isH2 = !isH1 && /Heading2|Subtitle/i.test(style)
+      const isH3 = !isH1 && !isH2 && /Heading[3-6]/i.test(style)
+      const isList = Boolean(numPr) || /List/i.test(style)
+
+      if (isList) {
+        const numId = numPr?.querySelector('numId')?.getAttribute('w:val') ?? ''
+        // Heuristic: if numId > 1 or style mentions Number, format as numbered list
+        const isNumbered = /Number/i.test(style) || numId === '2'
+        numListCounter = isNumbered ? numListCounter + 1 : 0
+        blocks.push({
+          kind: 'li',
+          text: fullText,
+          spans,
+          align,
+          listMarker: isNumbered ? `${numListCounter}.` : '-',
+        })
+      } else {
+        numListCounter = 0
+        blocks.push({
+          kind: isH1 ? 'h1' : isH2 ? 'h2' : isH3 ? 'h3' : 'p',
+          text: fullText,
+          spans,
+          align,
+          bold: isH1 || isH2 || isH3 || (spans.length > 0 && spans.every((s) => s.bold)),
+          italic: spans.length > 0 && spans.every((s) => s.italic),
+        })
+      }
+    }
+
+    if (hasExplicitBreakAfter) {
+      blocks.push({ kind: 'page-break' })
+    }
+  }
+
+  return { blocks, headerText, footerText }
+}
+
+// ── Word → PDF (direct OOXML rich layout with inline runs, images, alignments, lists, headers/footers & tables) ──
 export async function docxToPdf(file: File, opts?: DocLayoutOpts): Promise<OutputFile> {
+  try {
+    const rich = await parseDocxRichBlocks(file)
+    if (rich.blocks.length > 0) {
+      return {
+        name: `${stem(file.name)}.pdf`,
+        blob: await blocksToPdf(rich.blocks, stem(file.name), {
+          ...opts,
+          headerText: opts?.headerText ?? rich.headerText,
+          footerText: opts?.footerText ?? rich.footerText,
+        }),
+      }
+    }
+  } catch {
+    // Fall back to mammoth HTML / plain text extraction below
+  }
   try {
     const htmlOut = await wordToHtml(file)
     const html = await htmlOut.blob.text()
