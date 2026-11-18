@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-export type Lang = 'en' | 'es' | 'hi'
+export type Lang = 'en' | 'es'
 
 export const DICT = {
   en: {
@@ -23,16 +23,6 @@ export const DICT = {
     'common.favorites': 'Tus favoritos', 'common.recent': 'Usados recientemente',
     'common.processing': 'Procesando…', 'common.cancel': 'Cancelar',
   },
-  hi: {
-    'nav.home': 'होम', 'nav.allTools': 'सभी टूल', 'nav.categories': 'श्रेणियाँ', 'nav.about': 'परिचय',
-    'nav.searchPlaceholder': 'टूल खोजें…', 'nav.free': 'मुफ़्त · बिना साइन-अप',
-    'home.kicker': 'मुफ़्त ऑनलाइन फ़ाइल टूल',
-    'home.titleA': 'हर फ़ाइल। हर टूल।', 'home.titleB': 'एक ही जगह।',
-    'home.sub': 'शक्तिशाली ऑनलाइन टूल से अपनी फ़ाइलों को कंप्रेस, कन्वर्ट, एडिट और मैनेज करें। सरल, सुरक्षित और मुफ़्त — न खाता, न इंस्टॉल।',
-    'home.searchBtn': 'खोजें', 'home.browseAll': 'सभी टूल देखें',
-    'common.favorites': 'आपके पसंदीदा', 'common.recent': 'हाल में उपयोग किए गए',
-    'common.processing': 'प्रोसेस हो रहा है…', 'common.cancel': 'रद्द करें',
-  },
 } as const
 
 export type I18nKey = keyof (typeof DICT)['en']
@@ -43,6 +33,6 @@ export const Ctx = createContext<I18nCtx>({ lang: 'en', setLang: () => {}, t: (k
 
 export const useI18n = () => useContext(Ctx)
 export const LANGS: { id: Lang; label: string }[] = [
-  { id: 'en', label: 'EN' }, { id: 'es', label: 'ES' }, { id: 'hi', label: 'हिं' },
+  { id: 'en', label: 'EN' }, { id: 'es', label: 'ES' },
 ]
 

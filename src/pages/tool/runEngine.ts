@@ -1,6 +1,7 @@
 import type { Tool } from '../../data/tools'
 import type { OutputFile } from '../../processing/download'
 import type { ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../../processing/image'
+import { IMAGE_EXTRA_TOOLS, type ImageExtraSettings, type ImageExtraToolId } from '../../processing/imageExtraTypes'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../../processing/pdf'
 import type { PdfAnnotation, PdfEditAnnotationMode, SignPlacement } from '../../processing/advanced'
 import type { CsvAction } from '../../processing/text'
@@ -172,6 +173,11 @@ export interface RunSettings {
   csvDelim?: string
   maxEdge?: number
   targetSizeKB?: number
+  targetMode?: 'max' | 'range'
+  minSizeKB?: number
+  imgEncoder?: 'auto' | 'browser' | 'wasm'
+  kbTargetWidth?: number
+  kbTargetHeight?: number
   resizeMode?: 'stretch' | 'contain' | 'cover'
   smoothing?: 'high' | 'pixelated'
   cropCircular?: boolean
@@ -186,6 +192,7 @@ export interface RunSettings {
   wmLogoScale?: number
   imgPdfMargin?: 'none' | 'compact' | 'standard'
   imgPdfOrientation?: 'auto' | 'portrait' | 'landscape'
+  imageExtraSettings?: ImageExtraSettings
 }
 
 export interface RunContext {
@@ -196,7 +203,8 @@ export interface RunContext {
   onProgress: (done: number, total: number) => void
 }
 
-const IMAGE_IDS = new Set(['compress-image', 'resize-image', 'crop-image', 'jpg-to-png', 'png-to-jpg', 'webp-converter', 'jpg-to-webp', 'png-to-webp', 'rotate-image', 'flip-image', 'image-watermark', 'image-to-pdf', 'ico-converter', 'image-ocr'])
+const IMAGE_EXTRA_IDS = new Set<string>(IMAGE_EXTRA_TOOLS.map((t) => t.id))
+const IMAGE_IDS = new Set(['compress-image', 'compress-image-kb', 'resize-image', 'crop-image', 'jpg-to-png', 'png-to-jpg', 'webp-converter', 'jpg-to-webp', 'png-to-webp', 'rotate-image', 'flip-image', 'image-watermark', 'image-to-pdf', 'ico-converter', 'image-ocr'])
 const PDF_IDS = new Set(['merge-pdf', 'split-pdf', 'remove-pdf-pages', 'extract-pdf-pages', 'organize-pdf', 'rotate-pdf', 'compress-pdf', 'pdf-page-numbers', 'pdf-watermark', 'pdf-to-jpg', 'pdf-to-image', 'pdf-to-png', 'ocr-pdf', 'compare-pdf'])
 const OFFICE_IDS = new Set(['word-to-txt', 'extract-word-text', 'word-to-html', 'compress-docx', 'merge-word', 'split-word', 'edit-word', 'compress-powerpoint', 'merge-presentations', 'split-presentations', 'remove-slides', 'extract-slides', 'reorder-slides', 'pptx-to-pdf', 'slides-to-images', 'xls-to-xlsx', 'csv-to-excel', 'excel-to-csv', 'merge-excel', 'split-worksheets', 'remove-worksheets', 'compress-excel', 'excel-to-html', 'xlsx-to-pdf', 'excel-to-pdf', 'remove-word-pages', 'docx-page-remover'])
 const TEXT_IDS = new Set(['zip-files', 'extract-zip', 'html-to-txt', 'txt-converter', 'markdown-converter', 'json-formatter', 'json-to-xml', 'xml-formatter', 'csv-tools'])
@@ -230,47 +238,102 @@ export async function runTool({ tool, files: fs, settings: s, signal, onProgress
     const ocrOpts = { ...proc, lang: s.ocrLang, format: s.ocrFormat }
     return id === 'ocr-pdf' ? OCR.ocrPdf(f0, ocrOpts) : OCR.ocrImage(f0, ocrOpts)
   }
+  if (IMAGE_EXTRA_IDS.has(id)) {
+    const { runImageExtra } = await import('../../processing/imageExtra')
+    const { defaultImageExtraSettings } = await import('../../processing/imageExtraTypes')
+    return runImageExtra(id as ImageExtraToolId, fs, s.imageExtraSettings ?? defaultImageExtraSettings, proc)
+  }
   if (IMAGE_IDS.has(id)) {
     const IMG = await import('../../processing/image')
+    const { compressImageSmart, runImageOp } = await import('../../processing/imageWorkerClient')
     switch (id) {
       case 'compress-image': {
-        const { compressImageSmart } = await import('../../processing/imageWorkerClient')
         return batch(fs, (f) => compressImageSmart(f, {
           quality: s.quality / 100,
           format: s.format,
           maxEdge: s.maxEdge,
           targetSizeKB: s.targetSizeKB,
+          targetMode: s.targetMode,
+          minSizeKB: s.minSizeKB,
+          encoder: s.imgEncoder,
         }))
       }
-      case 'resize-image': return batch(fs, (f) => IMG.resizeImage(f, s.width, s.height, s.format, {
-        mode: s.resizeMode,
-        smoothing: s.smoothing,
-        bgColor: s.imgBgColor,
+      case 'compress-image-kb': {
+        const effTargetKB = s.targetSizeKB && s.targetSizeKB > 0 ? s.targetSizeKB : 50
+        return batch(fs, (f) => compressImageSmart(f, {
+          quality: 0.85,
+          format: s.format === 'keep' ? 'image/jpeg' : s.format,
+          targetSizeKB: effTargetKB,
+          targetMode: s.targetMode ?? (s.minSizeKB && s.minSizeKB > 0 ? 'range' : 'max'),
+          minSizeKB: s.minSizeKB,
+          width: s.kbTargetWidth && s.kbTargetWidth > 0 ? s.kbTargetWidth : undefined,
+          height: s.kbTargetHeight && s.kbTargetHeight > 0 ? s.kbTargetHeight : undefined,
+          encoder: s.imgEncoder ?? 'auto',
+        }))
+      }
+      case 'resize-image': return batch(fs, (f) => runImageOp(f, {
+        op: 'resize',
+        width: s.width,
+        height: s.height,
+        format: s.format,
+        opts: {
+          mode: s.resizeMode,
+          smoothing: s.smoothing,
+          bgColor: s.imgBgColor,
+        },
       }))
-      case 'crop-image': return batch(fs, (f) => IMG.cropImage(f, s.crop.x, s.crop.y, s.crop.w, s.crop.h, {
-        circular: s.cropCircular,
-        cornerRadius: s.cropCornerRadius,
-        cropMode: s.cropMode,
-        perspectiveQuad: s.perspectiveQuad,
-        perspectiveAspect: s.perspectiveAspect,
-        scanEnhance: s.cropScanEnhance,
+      case 'crop-image': return batch(fs, (f) => runImageOp(f, {
+        op: 'crop',
+        xPct: s.crop.x,
+        yPct: s.crop.y,
+        wPct: s.crop.w,
+        hPct: s.crop.h,
+        opts: {
+          circular: s.cropCircular,
+          cornerRadius: s.cropCornerRadius,
+          cropMode: s.cropMode,
+          perspectiveQuad: s.perspectiveQuad,
+          perspectiveAspect: s.perspectiveAspect,
+          scanEnhance: s.cropScanEnhance,
+        },
       }))
       case 'jpg-to-png': case 'png-to-jpg': case 'jpg-to-webp': case 'png-to-webp': {
         const t: ImgFormat = id.endsWith('png') ? 'image/png' : id.endsWith('webp') ? 'image/webp' : 'image/jpeg'
-        return batch(fs, (f) => IMG.convertImage(f, t, s.quality / 100, { bgColor: s.imgBgColor }))
+        return batch(fs, (f) => runImageOp(f, {
+          op: 'convert',
+          targetType: t,
+          quality: s.quality / 100,
+          opts: { bgColor: s.imgBgColor, encoder: s.imgEncoder },
+        }))
       }
-      case 'webp-converter': return batch(fs, (f) => IMG.convertImage(f, s.format === 'keep' ? 'image/webp' : s.format, s.quality / 100, { bgColor: s.imgBgColor }))
-      case 'rotate-image': return batch(fs, (f) => IMG.rotateImage(f, s.angle, { bgColor: s.rotBgColor }))
-      case 'flip-image': return batch(fs, (f) => IMG.flipImage(f, s.flipH, s.flipV))
-      case 'image-watermark': return batch(fs, (f) => IMG.watermarkImage(f, {
-        text: s.wmText || 'DocDoctor',
-        opacity: s.wmOpacity,
-        fontSize: s.wmFontSize,
-        position: s.wmPos || 'bottom-right',
-        logoUrl: s.wmLogoUrl,
-        colorHex: s.wmColor,
-        angle: s.wmAngle,
-        logoScale: s.wmLogoScale,
+      case 'webp-converter': return batch(fs, (f) => runImageOp(f, {
+        op: 'convert',
+        targetType: s.format === 'keep' ? 'image/webp' : s.format,
+        quality: s.quality / 100,
+        opts: { bgColor: s.imgBgColor, encoder: s.imgEncoder },
+      }))
+      case 'rotate-image': return batch(fs, (f) => runImageOp(f, {
+        op: 'rotate',
+        deg: s.angle,
+        opts: { bgColor: s.rotBgColor },
+      }))
+      case 'flip-image': return batch(fs, (f) => runImageOp(f, {
+        op: 'flip',
+        horizontal: s.flipH,
+        vertical: s.flipV,
+      }))
+      case 'image-watermark': return batch(fs, (f) => runImageOp(f, {
+        op: 'watermark-text',
+        opts: {
+          text: s.wmText || 'DocDoctor',
+          opacity: s.wmOpacity,
+          fontSize: s.wmFontSize,
+          position: s.wmPos || 'bottom-right',
+          logoUrl: s.wmLogoUrl,
+          colorHex: s.wmColor,
+          angle: s.wmAngle,
+          logoScale: s.wmLogoScale,
+        },
       }))
       case 'image-to-pdf': return [await IMG.imagesToPdf(fs, s.pageSize, {
         pageSize: s.pageSize,

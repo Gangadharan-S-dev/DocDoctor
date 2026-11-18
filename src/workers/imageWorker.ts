@@ -1,113 +1,130 @@
 /**
- * Off-main-thread image compression. Uses createImageBitmap + OffscreenCanvas
- * so batch jobs never block scrolling or input. The client falls back to the
- * main-thread engine whenever Worker/OffscreenCanvas is unavailable.
+ * Off-main-thread image processing worker. Supports an op-based protocol:
+ * - compress (with WASM MozJPEG/WebP/AVIF, UPNG palette quantization, binary-search target size)
+ * - resize (stepped halving downscale)
+ * - rotate (90°/180°/270° + fine angles)
+ * - flip (horizontal / vertical)
+ * - crop (rectangle, circular/rounded, 4-point perspective warp + scan enhancement)
+ * - convert (JPG / PNG / WebP / AVIF)
+ * - watermark-text (text overlay + tiling)
+ *
+ * Also supports legacy `CompressRequest` messages without an `op` field so
+ * existing callers stay backward compatible.
  */
-export interface CompressRequest {
+import {
+  type CompressOpts,
+  type ConvertOpts,
+  type CropOpts,
+  type ImgFormat,
+  type ResizeOpts,
+  type RotateOpts,
+  type WatermarkOpts,
+  compressImageBlob,
+  convertImageBlob,
+  cropImageBlob,
+  flipImageBlob,
+  resizeImageBlob,
+  rotateImageBlob,
+  watermarkTextBlob,
+} from '../processing/image'
+import { extFor, stemOf } from '../processing/imageCore'
+
+export { stemOf }
+
+export type ImageWorkerOp =
+  | { op: 'compress'; opts: CompressOpts }
+  | { op: 'resize'; width: number; height: number; format: 'keep' | ImgFormat; opts?: ResizeOpts }
+  | { op: 'rotate'; deg: number; opts?: RotateOpts }
+  | { op: 'flip'; horizontal: boolean; vertical: boolean }
+  | { op: 'crop'; xPct: number; yPct: number; wPct: number; hPct: number; opts?: CropOpts }
+  | { op: 'convert'; targetType: ImgFormat; quality?: number; opts?: ConvertOpts }
+  | { op: 'watermark-text'; opts: WatermarkOpts }
+
+export interface ImageWorkerRequest {
   id: number
   buffer: ArrayBuffer
   name: string
   type: string
-  quality: number
-  format: 'keep' | 'image/jpeg' | 'image/png' | 'image/webp'
+  job?: ImageWorkerOp
+  // Legacy flat fields (kept for backward compatibility with CompressRequest)
+  quality?: number
+  format?: 'keep' | ImgFormat
   maxEdge?: number
   targetSizeKB?: number
 }
-export interface CompressResponse {
+
+export type CompressRequest = ImageWorkerRequest
+
+export interface ImageWorkerResponse {
   id: number
   blob?: Blob
   outType?: string
+  width?: number
+  height?: number
   error?: string
 }
 
-const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
-export const stemOf = (name: string) => name.replace(/\.[^.]+$/, '')
+export type CompressResponse = ImageWorkerResponse
 
-self.onmessage = async (e: MessageEvent<CompressRequest>) => {
-  const { id, buffer, type, quality, format, maxEdge, targetSizeKB } = e.data
-  try {
-    const bmp = await createImageBitmap(new Blob([buffer], { type }))
-    let w = bmp.width, h = bmp.height
-    if (maxEdge && Math.max(w, h) > maxEdge) {
-      const s = maxEdge / Math.max(w, h)
-      w = Math.max(1, Math.round(w * s))
-      h = Math.max(1, Math.round(h * s))
-    }
-    const canvas = new OffscreenCanvas(w, h)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('OffscreenCanvas 2D context unavailable.')
-    const outType = format === 'keep' ? (type === 'image/png' || type === 'image/webp' ? type : 'image/jpeg') : format
-    if (outType === 'image/jpeg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height) }
-    ctx.drawImage(bmp, 0, 0, w, h)
-    bmp.close()
-
-    // Quantize PNG pixel noise to optimize DEFLATE compression
-    if (outType === 'image/png') {
-      try {
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        const data = imgData.data
-        for (let i = 0; i < data.length; i += 4) {
-          data[i] = data[i] & 0xf8
-          data[i + 1] = data[i + 1] & 0xf8
-          data[i + 2] = data[i + 2] & 0xf8
-        }
-        ctx.putImageData(imgData, 0, 0)
-      } catch {
-        // ignore
+if (typeof self !== 'undefined' && typeof (self as unknown as Worker).postMessage === 'function') {
+  self.onmessage = async (e: MessageEvent<ImageWorkerRequest>) => {
+    const msg = e.data
+    const { id, buffer, name, type } = msg
+    try {
+      const inputBlob = new Blob([buffer], { type })
+      const job: ImageWorkerOp = msg.job ?? {
+        op: 'compress',
+        opts: {
+          quality: msg.quality ?? 0.8,
+          format: msg.format ?? 'keep',
+          maxEdge: msg.maxEdge,
+          targetSizeKB: msg.targetSizeKB,
+        },
       }
-    }
 
-    let curQuality = quality
-    let blob = await canvas.convertToBlob({ type: outType, quality: curQuality })
-
-    // Target size adaptive loop: tunes quality and downsamples until under target
-    if (targetSizeKB && targetSizeKB > 0) {
-      const targetBytes = targetSizeKB * 1024
-      let attempts = 0
-      let currentCanvas = canvas
-      while (blob.size > targetBytes && attempts < 6) {
-        attempts++
-        if (outType !== 'image/png' && curQuality > 0.35) {
-          curQuality = Math.max(0.15, curQuality - 0.18)
-          blob = await currentCanvas.convertToBlob({ type: outType, quality: curQuality })
-        } else {
-          const nw = Math.max(160, Math.round(currentCanvas.width * 0.75))
-          const nh = Math.max(160, Math.round(currentCanvas.height * 0.75))
-          if (nw === currentCanvas.width && nh === currentCanvas.height) break
-          const sc = new OffscreenCanvas(nw, nh)
-          const sctx = sc.getContext('2d')
-          if (!sctx) break
-          if (outType === 'image/jpeg') { sctx.fillStyle = '#ffffff'; sctx.fillRect(0, 0, nw, nh) }
-          sctx.drawImage(currentCanvas, 0, 0, nw, nh)
-          currentCanvas = sc
-          blob = await currentCanvas.convertToBlob({ type: outType, quality: curQuality })
-        }
+      let result: { blob: Blob; outType: string; width: number; height: number }
+      switch (job.op) {
+        case 'compress':
+          result = await compressImageBlob(inputBlob, name, job.opts)
+          break
+        case 'resize':
+          result = await resizeImageBlob(inputBlob, job.width, job.height, job.format, job.opts)
+          break
+        case 'rotate':
+          result = await rotateImageBlob(inputBlob, job.deg, job.opts)
+          break
+        case 'flip':
+          result = await flipImageBlob(inputBlob, job.horizontal, job.vertical)
+          break
+        case 'crop':
+          result = await cropImageBlob(inputBlob, job.xPct, job.yPct, job.wPct, job.hPct, job.opts)
+          break
+        case 'convert':
+          result = await convertImageBlob(inputBlob, job.targetType, job.quality, job.opts)
+          break
+        case 'watermark-text':
+          result = await watermarkTextBlob(inputBlob, job.opts)
+          break
       }
-    }
 
-    // Never return an image larger than the input
-    if (!targetSizeKB && blob.size >= buffer.byteLength) {
-      if (outType !== 'image/png' && curQuality > 0.40) {
-        const retryQuality = Math.max(0.35, curQuality * 0.75)
-        const retryBlob = await canvas.convertToBlob({ type: outType, quality: retryQuality })
-        if (retryBlob.size < buffer.byteLength) {
-          blob = retryBlob
-        } else {
-          blob = new Blob([buffer], { type })
-        }
-      } else {
-        blob = new Blob([buffer], { type })
+      const res: ImageWorkerResponse = {
+        id,
+        blob: result.blob,
+        outType: result.outType,
+        width: result.width,
+        height: result.height,
       }
+      ;(self as unknown as Worker).postMessage(res)
+    } catch (err) {
+      const res: ImageWorkerResponse = {
+        id,
+        error: err instanceof Error ? err.message : 'Worker image operation failed.',
+      }
+      ;(self as unknown as Worker).postMessage(res)
     }
-
-    const res: CompressResponse = { id, blob, outType }
-    ;(self as unknown as Worker).postMessage(res)
-  } catch (err) {
-    const res: CompressResponse = { id, error: err instanceof Error ? err.message : 'Worker compression failed.' }
-    ;(self as unknown as Worker).postMessage(res)
   }
 }
 
-export function workerOutputName(name: string, outType: string): string {
-  return `${stemOf(name)}-compressed.${EXT[outType] ?? 'jpg'}`
+export function workerOutputName(name: string, outType: string, suffix = '-compressed'): string {
+  return `${stemOf(name)}${suffix}.${extFor(outType)}`
 }

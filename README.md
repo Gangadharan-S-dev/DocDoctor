@@ -14,12 +14,11 @@ npm run lint     # eslint + tsc
 ```
 
 Stack: React 19, React Router 8, Vite 8 (Rolldown), Tailwind CSS 4, TypeScript 5.9.
-Processing runs in the browser; image compression batches run in a Web Worker
-with a main-thread fallback, and OCR (Tesseract.js) runs in its own worker.
+Processing runs in the browser; heavy image jobs (compress, resize, rotate, flip, crop/perspective warp, convert, text watermark) run in a Web Worker with jSquash WASM codecs (MozJPEG, WebP, AVIF, OxiPNG) and UPNG.js palette quantization, with a main-thread fallback, and OCR (Tesseract.js) runs in its own worker.
 
-## Live tools (76 in browser + 2 via the LibreOffice service = all 78 covered)
+## Live tools (85 in browser + 2 via the LibreOffice service = all 87 covered)
 
-- **Image (15):** Compress, Resize, Crop, JPG↔PNG, WebP Converter, JPG/PNG→WebP, Rotate, Flip, Image→PDF, PDF→Image, Watermark, Metadata Viewer, ICO Converter
+- **Image (25):** Compress, Compress to KB (20KB/50KB/100KB exam & portal presets), Resize, Crop (with 4-point perspective warp & Sauvola/Magic Color scan enhancement), Passport Photo Maker (official biometric presets + 300 DPI + printable A4/4×6 sheet), HEIC→JPG, Blur & Redact Image (multi-region box blur/pixelate/blackout), Universal Image Converter (JPG/PNG/WebP/AVIF/GIF/BMP/ICO/SVG), Image→Base64, Remove Background (on-device MODNet/BiRefNet ONNX via WebGPU/WASM), Image Collage Maker, Animated GIF Maker, JPG↔PNG, WebP/AVIF Converter, JPG/PNG→WebP, Rotate, Flip, Image→PDF, PDF→Image, Watermark, Metadata Viewer (EXIF/ICC/DPI + lossless sanitizer), ICO Converter, Image to Text (OCR)
 - **PDF (13):** Compress, Merge, Split, Compare PDFs, Remove/Extract/Organize pages (visual drag-and-drop grid), Rotate, PDF→JPG/PNG, Page Numbers, Watermark
 - **Word (7):** Word→TXT, Word→HTML, Extract Text, Compress DOCX, Merge Word, Split Word (by heading/paragraphs), Edit Word (text editor → rebuilt DOCX)
 - **PowerPoint (6):** Compress, Merge, Split, Remove/Extract/Reorder slides (visual pickers)
@@ -34,7 +33,7 @@ each labeled in the UI with exactly what it simplifies.
 Upgrade release (v0.2.0) added: **OCR PDF to Text** and **Image to Text (OCR)**
 (on-device Tesseract.js, English), real rasterizing **Extreme** PDF compression,
 progress + cancel for long jobs, favorites/recent tools (local only), dark mode,
-EN/ES/HI interface language for the app chrome, PWA offline shell, and per-tool
+EN/ES interface language for the app chrome, PWA offline shell, and per-tool
 SEO metadata. Tool names and content stay in English in every language.
 
 P0 upgrade added: OCR in **13 languages** with **searchable PDF** output

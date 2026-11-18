@@ -7,6 +7,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: { port: 5173, host: '127.0.0.1', proxy: { '/api': 'http://127.0.0.1:8080' } },
   preview: { port: 4173, host: '127.0.0.1', proxy: { '/api': 'http://127.0.0.1:8080' } },
+  worker: {
+    format: 'es',
+  },
+  optimizeDeps: {
+    exclude: ['@jsquash/jpeg', '@jsquash/webp', '@jsquash/avif', '@jsquash/oxipng'],
+  },
   build: {
     chunkSizeWarningLimit: 600,
     // Vite's preload helper gets its own tiny chunk below (advancedChunks

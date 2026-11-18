@@ -474,6 +474,7 @@ export default function VisualCrop({
             ['none', 'Original Photo'],
             ['magic-color', 'Magic Color Scan'],
             ['bw-document', 'Crisp B&W Doc'],
+            ['adaptive-bw', 'Adaptive B&W (Sauvola)'],
           ] as [ScanEnhanceMode, string][]).map(([val, label]) => (
             <button
               key={val}

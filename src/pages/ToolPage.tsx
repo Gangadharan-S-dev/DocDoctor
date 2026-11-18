@@ -9,8 +9,15 @@ import { TOOLS, categoryById, formatSize, isImplemented, isServerTool, serverEnd
 import UploadArea, { type PickedFile } from '../components/UploadArea'
 import ToolCard from '../components/ToolCard'
 import type { OutputFile } from '../processing/download'
-import { downloadBlob, downloadZip } from '../processing/download'
+import { downloadBlob, downloadZip, extOf, stem } from '../processing/download'
+import { MAX_CANVAS_PIXELS, clampDims, formatOutputName } from '../processing/imageCore'
 import type { ImageMeta, ImgFormat, PerspectiveQuad, ScanEnhanceMode } from '../processing/image'
+import {
+  IMAGE_EXTRA_TOOLS,
+  defaultImageExtraSettings,
+  type ImageExtraSettings,
+  type ImageExtraToolId,
+} from '../processing/imageExtraTypes'
 import type { PageNumberPosition, PageOp, PdfWatermarkPosition } from '../processing/pdf'
 import type { CsvAction, FileMeta, ZipArchiveSummary } from '../processing/text'
 import type { PdfAnnotation, PdfDocxPreviewInfo, PdfEditAnnotationMode, PdfRepairDiagnostic, SignPlacement } from '../processing/advanced'
@@ -35,6 +42,10 @@ const SignaturePad = lazy(async () => ({ default: (await import('../components/P
 const PagePlacement = lazy(async () => ({ default: (await import('../components/PdfStudio')).PagePlacement }))
 const VisualCrop = lazy(() => import('../components/VisualCrop'))
 const BeforeAfterSlider = lazy(() => import('../components/BeforeAfterSlider'))
+const ImageExtraPanel = lazy(() => import('../components/image/ImageExtraPanel'))
+
+const IMAGE_EXTRA_ID_SET = new Set<string>(IMAGE_EXTRA_TOOLS.map((t) => t.id))
+const isImageExtraTool = (id: string): id is ImageExtraToolId => IMAGE_EXTRA_ID_SET.has(id)
 
 const PickerFallback = () => <p className="flex items-center gap-2 py-6 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
 
@@ -275,7 +286,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
   // Image upgrades state
   const [imgMaxEdge, setImgMaxEdge] = useState<number>(0)
-  const [targetSizeKB, setTargetSizeKB] = useState<number>(0)
+  const [targetSizeKB, setTargetSizeKB] = useState<number>(() => (tool.id === 'compress-image-kb' ? 50 : 0))
+  const [targetMode, setTargetMode] = useState<'max' | 'range'>(() => (tool.id === 'compress-image-kb' ? 'range' : 'max'))
+  const [minSizeKB, setMinSizeKB] = useState<number>(() => (tool.id === 'compress-image-kb' ? 20 : 0))
+  const [imgEncoder, setImgEncoder] = useState<'auto' | 'browser' | 'wasm'>('auto')
+  const [kbTargetWidth, setKbTargetWidth] = useState<number>(0)
+  const [kbTargetHeight, setKbTargetHeight] = useState<number>(0)
+  const [batchNamePattern, setBatchNamePattern] = useState<string>('')
   const [estSizeBytes, setEstSizeBytes] = useState<number | null>(null)
   const [resizeMode, setResizeMode] = useState<'stretch' | 'contain' | 'cover'>('stretch')
   const [smoothing, setSmoothing] = useState<'high' | 'pixelated'>('high')
@@ -298,6 +315,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [wmLogoScale, setWmLogoScale] = useState(0.28)
   const [imgPdfMargin, setImgPdfMargin] = useState<'none' | 'compact' | 'standard'>('standard')
   const [imgPdfOrientation, setImgPdfOrientation] = useState<'auto' | 'portrait' | 'landscape'>('auto')
+  const [imageExtraSettings, setImageExtraSettings] = useState<ImageExtraSettings>(defaultImageExtraSettings)
 
   const [serverOk, setServerOk] = useState<boolean | null>(null)
   const [compressorOk, setCompressorOk] = useState<boolean | null>(null)
@@ -317,6 +335,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [fav, setFav] = useState(() => isFavorite(tool.id))
   const [imgCompareMode, setImgCompareMode] = useState<'slider' | 'side'>('slider')
+  const [compareIdx, setCompareIdx] = useState<number>(0)
   const [customNames, setCustomNames] = useState<Record<number, string>>({})
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -527,7 +546,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
   // Live compressed image size estimation when quality/format/maxEdge changes
   useEffect(() => {
-    if (tool.id !== 'compress-image' || !first || !first.type.startsWith('image/')) return
+    if ((tool.id !== 'compress-image' && tool.id !== 'compress-image-kb') || !first || !first.type.startsWith('image/')) return
     let alive = true
     const timer = setTimeout(() => {
       import('../processing/image')
@@ -536,12 +555,17 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           format,
           maxEdge: imgMaxEdge || undefined,
           targetSizeKB: targetSizeKB || undefined,
+          targetMode,
+          minSizeKB: targetMode === 'range' && minSizeKB > 0 ? minSizeKB : undefined,
+          encoder: imgEncoder,
+          width: kbTargetWidth > 0 ? kbTargetWidth : undefined,
+          height: kbTargetHeight > 0 ? kbTargetHeight : undefined,
         }))
         .then((sz) => { if (alive) setEstSizeBytes(sz) })
         .catch(() => {})
     }, 140)
     return () => { alive = false; clearTimeout(timer) }
-  }, [first, tool.id, quality, format, imgMaxEdge, targetSizeKB])
+  }, [first, tool.id, quality, format, imgMaxEdge, targetSizeKB, targetMode, minSizeKB, imgEncoder, kbTargetWidth, kbTargetHeight])
 
   // JSON validation, XML/HTML/Text/Markdown loading, and CSV preview when first file changes
   useEffect(() => {
@@ -713,6 +737,11 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           zipFilterNames: zipSummary && zipFilterNames.length > 0 && zipFilterNames.length < zipSummary.entries.length ? zipFilterNames : undefined,
           maxEdge: imgMaxEdge || undefined,
           targetSizeKB: targetSizeKB || undefined,
+          targetMode,
+          minSizeKB: targetMode === 'range' && minSizeKB > 0 ? minSizeKB : undefined,
+          imgEncoder,
+          kbTargetWidth: kbTargetWidth > 0 ? kbTargetWidth : undefined,
+          kbTargetHeight: kbTargetHeight > 0 ? kbTargetHeight : undefined,
           resizeMode,
           smoothing,
           cropCircular,
@@ -727,6 +756,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           wmLogoScale,
           imgPdfMargin,
           imgPdfOrientation,
+          imageExtraSettings,
           imgPdfLayout,
           imgPdfBgColor,
           imgPdfCaptions,
@@ -824,6 +854,30 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
   const inUrl = useMemo(() => (first && first.type.startsWith('image/') ? URL.createObjectURL(first) : null), [first])
   useEffect(() => () => { if (inUrl) URL.revokeObjectURL(inUrl) }, [inUrl])
+
+  const safeCompareIdx = compareIdx < files.length && compareIdx < results.length ? compareIdx : 0
+  const compareInFile = files[safeCompareIdx]?.file ?? first
+  const compareInUrl = useMemo(
+    () => (compareInFile && compareInFile.type.startsWith('image/') ? URL.createObjectURL(compareInFile) : null),
+    [compareInFile],
+  )
+  useEffect(() => () => { if (compareInUrl) URL.revokeObjectURL(compareInUrl) }, [compareInUrl])
+
+  const resolveOutputName = (r: OutputFile, idx: number): string => {
+    if (customNames[idx] !== undefined) return customNames[idx]
+    if (!batchNamePattern.trim()) return r.name
+    const srcFile = files[idx]?.file
+    const origStem = stem(srcFile?.name ?? r.name.replace(/-(compressed|cropped|rotated|flipped|watermarked|\d+x\d+)(?=\.[^.]+$)/i, ''))
+    const ext = extOf(r.name) || 'png'
+    const rDims = r as OutputFile & { width?: number; height?: number }
+    return formatOutputName(batchNamePattern, {
+      name: origStem,
+      n: idx + 1,
+      w: rDims.width ?? (idx === 0 ? dims?.w : undefined),
+      h: rDims.height ?? (idx === 0 ? dims?.h : undefined),
+      ext,
+    })
+  }
 
   const copyImage = async (blob: Blob, idx: number) => {
     try {
@@ -954,8 +1008,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 ['Aspect Ratio', aspectRatio ? `${aspectRatio.common} (${aspectRatio.orientation})` : 'N/A'],
                 ['Resolution', aspectRatio ? `${aspectRatio.mp} Megapixels` : 'N/A'],
                 ['Format', meta.type],
-                ['Animation', meta.animated ? 'Animated (Multi-frame)' : 'Static Image'],
+                ['Animation', meta.animated ? 'Animated (Multi-frame — only first frame kept when edited)' : 'Static Image'],
                 ['Size', formatSize(meta.size)],
+                ['Print Density (DPI)', meta.dpiX && meta.dpiY ? `${meta.dpiX} × ${meta.dpiY} DPI` : '72 DPI (Default)'],
+                ['Color Profile (ICC)', meta.iccProfile || 'sRGB (Standard)'],
+                ['EXIF Orientation', meta.orientationLabel || '1 — Horizontal (normal)'],
+                ['Software / Creator', meta.exif?.software || 'N/A in EXIF'],
                 ['Camera', meta.exif?.make || meta.exif?.model ? `${meta.exif?.make || ''} ${meta.exif?.model || ''}`.trim() : 'N/A in EXIF'],
                 ['Date Captured', meta.exif?.dateTimeOriginal || 'N/A in EXIF'],
                 ['Shutter Speed', meta.exif?.exposureTime || 'N/A'],
@@ -1414,7 +1472,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             {meta?.animated && (
               <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <span>Animated image detected ({meta.type}). Browser canvas processing exports a static frame of the first animation frame.</span>
+                <span>Animated image detected ({meta.type}). Only the first frame is kept when processed here — output will be a static image.</span>
+              </div>
+            )}
+            {meta?.exceedsCanvasLimit && dims && (
+              <div className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-900">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                <span>
+                  High-resolution image ({dims.w} × {dims.h} px exceeds the {(MAX_CANVAS_PIXELS / 1_000_000).toFixed(1)} MP browser canvas safety ceiling). It will be proportionally downscaled to {clampDims(dims.w, dims.h).w} × {clampDims(dims.w, dims.h).h} px so mobile &amp; desktop browsers don&apos;t run out of memory.
+                </span>
               </div>
             )}
             {/* Tool-specific settings */}
@@ -1443,7 +1509,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 )}
                 <div className="grid gap-4 sm:grid-cols-2">
                   {slider('Quality', quality, setQuality, 10, 100, '%')}
-                  {sel('Output format', format, setFormat, [['keep', 'Keep original format'], ['image/jpeg', 'JPG (smallest)'], ['image/png', 'PNG (lossless)'], ['image/webp', 'WebP (modern)']])}
+                  {sel('Output format', format, setFormat, [
+                    ['keep', 'Keep original format'],
+                    ['image/jpeg', 'JPG (smallest)'],
+                    ['image/png', 'PNG (palette quantized)'],
+                    ['image/webp', 'WebP (modern)'],
+                    ['image/avif', 'AVIF (next-gen ultra compact)'],
+                  ])}
                   {sel('Max Edge Downscaling', String(imgMaxEdge), (v: string) => setImgMaxEdge(+v), [
                     ['0', 'Original Dimensions (No scale down)'],
                     ['2560', '2560 px (2K QHD)'],
@@ -1451,37 +1523,231 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ['1280', '1280 px (720p HD)'],
                     ['800', '800 px (Compact Web)'],
                   ])}
-                  <label className="block">
-                    <span className="mb-1.5 flex justify-between text-sm font-bold text-ink-950">
-                      Target File Size Limit
-                      <span className="text-accent">{targetSizeKB ? `Under ${targetSizeKB} KB` : 'No Ceiling'}</span>
-                    </span>
-                    <div className="flex gap-1.5">
+                  {sel('Encoder', imgEncoder, setImgEncoder as never, [
+                    ['auto', 'Auto (MozJPEG / UPNG WASM default)'],
+                    ['wasm', 'Max compression (WASM — MozJPEG / WebP / AVIF / OxiPNG)'],
+                    ['browser', 'Browser (fast native canvas)'],
+                  ])}
+                  <div className="space-y-2 sm:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-ink-950">
+                        Target File Size Limit{' '}
+                        <span className="text-accent">
+                          {targetSizeKB
+                            ? targetMode === 'range' && minSizeKB > 0
+                              ? `${minSizeKB}–${targetSizeKB} KB`
+                              : `Under ${targetSizeKB} KB`
+                            : 'No Ceiling'}
+                        </span>
+                      </span>
+                      <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setTargetMode('max')}
+                          className={`rounded px-2.5 py-0.5 transition ${targetMode === 'max' ? 'bg-accent text-white' : 'text-slate-600 hover:text-ink-950'}`}
+                        >
+                          Max Ceiling
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetMode('range')
+                            if (!minSizeKB) setMinSizeKB(20)
+                            if (!targetSizeKB) setTargetSizeKB(50)
+                          }}
+                          className={`rounded px-2.5 py-0.5 transition ${targetMode === 'range' ? 'bg-accent text-white' : 'text-slate-600 hover:text-ink-950'}`}
+                        >
+                          Range (Min–Max KB)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {targetMode === 'range' && (
+                        <input
+                          type="number"
+                          min={0}
+                          step={5}
+                          placeholder="Min KB (e.g. 20)"
+                          value={minSizeKB || ''}
+                          onChange={(e) => setMinSizeKB(Math.max(0, +e.target.value))}
+                          className="input !py-1 w-28 text-xs"
+                          aria-label="Minimum target size in KB"
+                        />
+                      )}
                       <input
                         type="number"
                         min={0}
-                        step={50}
-                        placeholder="e.g. 200"
+                        step={10}
+                        placeholder="Max KB (e.g. 200)"
                         value={targetSizeKB || ''}
                         onChange={(e) => setTargetSizeKB(Math.max(0, +e.target.value))}
-                        className="input !py-1 text-xs"
+                        className="input !py-1 w-32 text-xs"
+                        aria-label="Maximum target size in KB"
                       />
-                      {[100, 200, 500].map((kb) => (
+                      {[20, 50, 100, 200, 500].map((kb) => (
                         <button
                           key={kb}
                           type="button"
                           onClick={() => setTargetSizeKB(kb)}
-                          className={`rounded-lg border px-2 py-1 text-xs font-bold transition ${targetSizeKB === kb ? 'bg-accent text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-bold transition ${targetSizeKB === kb ? 'bg-accent text-white border-accent' : 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'}`}
                         >
-                          {kb}KB
+                          {kb} KB
                         </button>
                       ))}
+                      {targetSizeKB > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => { setTargetSizeKB(0); setMinSizeKB(0) }}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 hover:text-ink-950"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
-                  </label>
+                  </div>
                   <p className="text-xs text-slate-500 sm:col-span-2">
-                    Downscaling large 12–24MP phone photos can shrink file size by 85–95% before compression. Setting a target size automatically tunes quality and resolution to meet upload requirements (visas, job forms, portals).
+                    Downscaling large 12–24MP phone photos can shrink file size by 85–95% before compression. Setting a target size runs a 7-step binary search on quality (and stepped downscaling if needed) to meet strict upload portals.
                   </p>
                 </div>
+              </div>
+            )}
+
+            {tool.id === 'compress-image-kb' && (
+              <div className="space-y-4">
+                {inUrl && dims && (
+                  <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 shadow-sm">
+                    <img src={inUrl} alt="Source" className="h-16 w-16 rounded-xl object-cover ring-1 ring-slate-200" />
+                    <div className="min-w-0 flex-1 text-xs">
+                      <div className="font-bold text-ink-950 truncate">{first?.name}</div>
+                      <div className="text-slate-500 mt-0.5">
+                        Original: <strong>{formatSize(first?.size ?? 0)}</strong> · {dims.w} × {dims.h} px
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-extrabold text-accent ring-1 ring-blue-200">
+                          Target: {targetMode === 'range' && minSizeKB > 0 ? `${minSizeKB}–${targetSizeKB || 50} KB` : `≤ ${targetSizeKB || 50} KB`}
+                          {kbTargetWidth > 0 && kbTargetHeight > 0 ? ` · ${kbTargetWidth}×${kbTargetHeight} px` : ''}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <span className="mb-2 block text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                    Exam &amp; Government Portal Presets
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { label: 'Photo 20–50 KB', mode: 'range' as const, min: 20, max: 50, w: 200, h: 230 },
+                      { label: 'Signature 10–20 KB', mode: 'range' as const, min: 10, max: 20, w: 140, h: 60 },
+                      { label: 'Passport photo ≤ 100 KB', mode: 'max' as const, min: 0, max: 100, w: 0, h: 0 },
+                      { label: 'Under 50 KB', mode: 'max' as const, min: 0, max: 50, w: 0, h: 0 },
+                      { label: 'Under 100 KB', mode: 'max' as const, min: 0, max: 100, w: 0, h: 0 },
+                      { label: 'Under 200 KB', mode: 'max' as const, min: 0, max: 200, w: 0, h: 0 },
+                    ].map((p) => {
+                      const active =
+                        targetMode === p.mode &&
+                        targetSizeKB === p.max &&
+                        (p.mode === 'max' || minSizeKB === p.min) &&
+                        kbTargetWidth === p.w &&
+                        kbTargetHeight === p.h
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => {
+                            setTargetMode(p.mode)
+                            setMinSizeKB(p.min)
+                            setTargetSizeKB(p.max)
+                            setKbTargetWidth(p.w)
+                            setKbTargetHeight(p.h)
+                          }}
+                          className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                            active
+                              ? 'border-accent bg-accent text-white shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Target Mode</span>
+                    <select
+                      value={targetMode}
+                      onChange={(e) => setTargetMode(e.target.value as 'max' | 'range')}
+                      className="input"
+                    >
+                      <option value="range">Exact Range (Min – Max KB)</option>
+                      <option value="max">Maximum Ceiling (Under X KB)</option>
+                    </select>
+                  </label>
+                  {targetMode === 'range' && (
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-ink-950">Minimum Size (KB)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={2000}
+                        value={minSizeKB || ''}
+                        onChange={(e) => setMinSizeKB(Math.max(0, +e.target.value))}
+                        className="input"
+                        placeholder="e.g. 20"
+                      />
+                    </label>
+                  )}
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Maximum Size (KB)</span>
+                    <input
+                      type="number"
+                      min={5}
+                      max={5000}
+                      value={targetSizeKB || ''}
+                      onChange={(e) => setTargetSizeKB(Math.max(1, +e.target.value))}
+                      className="input"
+                      placeholder="e.g. 50"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Fixed Width px (Optional)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={kbTargetWidth || ''}
+                      onChange={(e) => setKbTargetWidth(Math.max(0, +e.target.value))}
+                      className="input"
+                      placeholder="Keep original (or e.g. 200)"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-bold text-ink-950">Fixed Height px (Optional)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={kbTargetHeight || ''}
+                      onChange={(e) => setKbTargetHeight(Math.max(0, +e.target.value))}
+                      className="input"
+                      placeholder="Keep original (or e.g. 230)"
+                    />
+                  </label>
+                  {sel('Output Format', format === 'keep' ? 'image/jpeg' : format, setFormat, [
+                    ['image/jpeg', 'JPG (Required by most portals)'],
+                    ['image/webp', 'WebP'],
+                    ['image/png', 'PNG'],
+                  ])}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Uses binary-search quality tuning (and automatic dimension presets like 200×230 px photo or 140×60 px signature) so your file lands strictly inside the required KB window.
+                </p>
               </div>
             )}
 
@@ -1665,7 +1931,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </div>
                 )}
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {tool.id === 'webp-converter' && sel('Convert to', format === 'keep' ? 'image/webp' : format, setFormat, [['image/webp', 'WebP'], ['image/jpeg', 'JPG'], ['image/png', 'PNG']])}
+                  {tool.id === 'webp-converter' && sel('Convert to', format === 'keep' ? 'image/webp' : format, setFormat, [['image/webp', 'WebP'], ['image/avif', 'AVIF (next-gen)'], ['image/jpeg', 'JPG'], ['image/png', 'PNG']])}
                   {slider('Compression Quality', quality, setQuality, 10, 100, '%')}
                   {(tool.id === 'png-to-jpg' || (tool.id === 'webp-converter' && format === 'image/jpeg')) && (
                     <label className="block sm:col-span-2">
@@ -2198,6 +2464,17 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </label>
                 </div>
               </div>
+            )}
+
+            {isImageExtraTool(tool.id) && (
+              <Suspense fallback={<PickerFallback />}>
+                <ImageExtraPanel
+                  toolId={tool.id}
+                  files={files.map((f) => f.file)}
+                  value={imageExtraSettings}
+                  onChange={setImageExtraSettings}
+                />
+              </Suspense>
             )}
 
             {tool.id === 'split-pdf' && (
@@ -3958,10 +4235,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             </p>
 
             {/* Interactive Before/After image comparison */}
-            {inUrl && outUrls[0] && results.length === 1 && (
+            {compareInUrl && outUrls[safeCompareIdx] && (
               <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500">Visual Quality Comparison</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500">Visual Quality Comparison</span>
+                    {results.length > 1 && outUrls.some(Boolean) && (
+                      <select
+                        value={safeCompareIdx}
+                        onChange={(e) => setCompareIdx(+e.target.value)}
+                        aria-label="Select image to compare"
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs font-bold text-ink-950"
+                      >
+                        {results.map((r, idx) => (
+                          <option key={idx} value={idx}>
+                            #{idx + 1} — {r.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                   <div className="flex items-center rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold shadow-sm">
                     <button
                       type="button"
@@ -3983,16 +4276,16 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 {imgCompareMode === 'slider' ? (
                   <Suspense fallback={<PickerFallback />}>
                     <BeforeAfterSlider
-                      originalUrl={inUrl}
-                      processedUrl={outUrls[0]}
-                      originalLabel={`Original · ${formatSize(totalIn)}`}
-                      processedLabel={`Processed · ${formatSize(totalOut)}`}
+                      originalUrl={compareInUrl}
+                      processedUrl={outUrls[safeCompareIdx]!}
+                      originalLabel={`Original · ${formatSize(compareInFile?.size ?? totalIn)}`}
+                      processedLabel={`Processed · ${formatSize(results[safeCompareIdx]?.blob.size ?? totalOut)}`}
                     />
                   </Suspense>
                 ) : (
                   <div className="grid grid-cols-2 gap-3">
-                    <figure><img src={inUrl} alt="Original" className="max-h-56 w-full rounded-xl object-contain bg-white ring-1 ring-slate-200" /><figcaption className="mt-1 text-center text-xs font-bold text-slate-500">Original · {formatSize(totalIn)}</figcaption></figure>
-                    <figure><img src={outUrls[0]} alt="Processed" className="max-h-56 w-full rounded-xl object-contain bg-white ring-1 ring-slate-200" /><figcaption className="mt-1 text-center text-xs font-bold text-slate-500">Processed · {formatSize(totalOut)}</figcaption></figure>
+                    <figure><img src={compareInUrl} alt="Original" className="max-h-56 w-full rounded-xl object-contain bg-white ring-1 ring-slate-200" /><figcaption className="mt-1 text-center text-xs font-bold text-slate-500">Original · {formatSize(compareInFile?.size ?? totalIn)}</figcaption></figure>
+                    <figure><img src={outUrls[safeCompareIdx]!} alt="Processed" className="max-h-56 w-full rounded-xl object-contain bg-white ring-1 ring-slate-200" /><figcaption className="mt-1 text-center text-xs font-bold text-slate-500">Processed · {formatSize(results[safeCompareIdx]?.blob.size ?? totalOut)}</figcaption></figure>
                   </div>
                 )}
               </div>
@@ -4046,9 +4339,51 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
+            {results.length > 1 && results.some((r) => r.blob.type.startsWith('image/')) && (
+              <div className="mt-4 rounded-xl border border-teal-200 bg-white/80 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                    Batch Output Naming Pattern
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-semibold text-slate-500">
+                    <span>Tokens:</span>
+                    {['{name}', '{n}', '{w}', '{h}', '{ext}', '{date}'].map((tok) => (
+                      <button
+                        key={tok}
+                        type="button"
+                        onClick={() => setBatchNamePattern((p) => (p ? `${p}-${tok}` : `{name}-${tok}`))}
+                        className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink-950 hover:bg-accent/10 hover:text-accent"
+                      >
+                        {tok}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={batchNamePattern}
+                    onChange={(e) => setBatchNamePattern(e.target.value)}
+                    placeholder="e.g. {name}-{w}x{h}-{n}.{ext} or photo-{date}-{n}"
+                    aria-label="Batch output naming pattern"
+                    className="input !py-1.5 flex-1 font-mono text-xs"
+                  />
+                  {batchNamePattern && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchNamePattern('')}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <ul className="mt-4 space-y-2">
               {displayedResults.map((r, i) => {
-                const displayName = customNames[i] ?? r.name
+                const displayName = resolveOutputName(r, i)
                 const isPdf = r.blob.type === 'application/pdf' || r.name.toLowerCase().endsWith('.pdf')
                 const isImage = r.blob.type.startsWith('image/')
                 return (
@@ -4106,7 +4441,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <button
                   type="button"
                   onClick={() => {
-                    const renamed = results.map((r, i) => ({ ...r, name: customNames[i] ?? r.name }))
+                    const renamed = results.map((r, i) => ({ ...r, name: resolveOutputName(r, i) }))
                     downloadZip(renamed, `${tool.id}-results.zip`)
                   }}
                   className="btn-accent !py-2.5"
@@ -4124,8 +4459,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               const nextToolIds =
                 ext === '.pdf'
                   ? ['compress-pdf', 'protect-pdf', 'sign-pdf', 'pdf-watermark', 'pdf-page-numbers', 'pdf-to-word']
-                  : ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp'
-                    ? ['compress-image', 'resize-image', 'image-watermark', 'image-to-pdf', 'webp-converter']
+                  : ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp' || ext === '.avif'
+                    ? ['compress-image', 'compress-image-kb', 'resize-image', 'image-watermark', 'image-to-pdf', 'webp-converter']
                     : ext === '.docx'
                       ? ['word-to-pdf', 'compress-docx', 'edit-word', 'word-to-html']
                       : ext === '.xlsx'
@@ -4153,7 +4488,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="button"
                         onClick={() => {
                           const toPass = (nt.multiple ? results : results.slice(0, 1)).map(
-                            (r, idx) => new File([r.blob], customNames[idx] ?? r.name, { type: r.blob.type })
+                            (r, idx) => new File([r.blob], resolveOutputName(r, idx), { type: r.blob.type })
                           )
                           navigate(`/tool/${nt.id}`, { state: { chainedFiles: toPass } })
                         }}

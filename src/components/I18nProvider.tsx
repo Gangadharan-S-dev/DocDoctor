@@ -5,7 +5,7 @@ export default function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     try {
       const saved = localStorage.getItem(LANG_KEY)
-      return saved === 'es' || saved === 'hi' ? saved : 'en'
+      return saved === 'es' ? saved : 'en'
     } catch { return 'en' }
   })
   useEffect(() => { document.documentElement.lang = lang }, [lang])

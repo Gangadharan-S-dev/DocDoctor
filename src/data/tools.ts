@@ -3,8 +3,20 @@ import {
   FileArchive, Scissors, Merge, RotateCw, Lock, Unlock, Hash, Droplets,
   Wrench, PenLine, Stamp, Layers, FlipHorizontal2, Crop,
   Maximize2, RefreshCw, Info, FileImage, FileSpreadsheet, FileCode2,
-  Braces, FileJson2, ArrowLeftRight, Eye, type LucideIcon,
+  Braces, FileJson2, ArrowLeftRight, Eye, EyeOff, UserCheck, Wand2, type LucideIcon,
 } from 'lucide-react'
+import { IMAGE_EXTRA_TOOLS, type ImageExtraToolId } from '../processing/imageExtraTypes'
+
+const IMAGE_EXTRA_ICONS: Record<ImageExtraToolId, LucideIcon> = {
+  'passport-photo': UserCheck,
+  'heic-to-jpg': RefreshCw,
+  'blur-image': EyeOff,
+  'image-converter': ArrowLeftRight,
+  'image-to-base64': FileCode2,
+  'remove-background': Wand2,
+  'image-collage': Layers,
+  'gif-maker': FileImage,
+}
 
 export type CategoryId = 'pdf' | 'image' | 'word' | 'powerpoint' | 'excel' | 'other'
 
@@ -70,6 +82,7 @@ export const TOOLS: Tool[] = [
   T({ id: 'compare-pdf', name: 'Compare PDFs', description: 'Compare two PDF documents side-by-side to highlight page differences and changes.', category: 'pdf', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: true, icon: ArrowLeftRight, phase: 2, engine: 'PDF.js visual diff (browser)' }),
   // ── Image (Phase 2) ────────────────────────────────────────────
   T({ id: 'compress-image', name: 'Compress Image', description: 'Shrink JPG, PNG and WebP with adjustable quality and batch support.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif,.avif', acceptLabel: 'JPG, PNG, WebP, GIF, AVIF', maxSizeMB: 50, multiple: true, icon: FileArchive, popular: true, phase: 2, engine: 'Canvas (browser)' }),
+  T({ id: 'compress-image-kb', name: 'Compress Image to KB', description: 'Reduce photos and signatures to an exact size like 20KB, 50KB or 100KB for exam and government forms.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FileArchive, popular: true, phase: 2, engine: 'Canvas + WASM (browser)' }),
   T({ id: 'resize-image', name: 'Resize Image', description: 'Set exact width and height, with aspect-ratio lock.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Maximize2, popular: true, phase: 2, engine: 'Canvas (browser)' }),
   T({ id: 'crop-image', name: 'Crop Image', description: 'Crop with a visual editor, preset aspect ratios, and 4-point perspective warp.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Crop, phase: 2, engine: 'Canvas editor (browser)' }),
   T({ id: 'jpg-to-png', name: 'JPG to PNG', description: 'Convert JPG images to lossless PNG.', category: 'image', accept: '.jpg,.jpeg', acceptLabel: 'JPG', maxSizeMB: 50, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas (browser)' }),
@@ -81,10 +94,11 @@ export const TOOLS: Tool[] = [
   T({ id: 'flip-image', name: 'Flip Image', description: 'Mirror images horizontally or vertically.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FlipHorizontal2, phase: 2, engine: 'Canvas (browser)' }),
   T({ id: 'image-to-pdf', name: 'Image to PDF', description: 'Combine images into a single, well-ordered PDF.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: FileText, popular: true, phase: 2, engine: 'pdf-lib' }),
   T({ id: 'pdf-to-image', name: 'PDF to Image', description: 'Render PDF pages as JPG or PNG images.', category: 'image', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileImage, phase: 2, engine: 'PDF.js canvas' }),
-  T({ id: 'image-watermark', name: 'Add Image Watermark', description: 'Overlay text or logo watermarks on images.', category: 'image', accept: '.jpg,.jpeg,.png', acceptLabel: 'JPG, PNG', maxSizeMB: 50, multiple: true, icon: Droplets, phase: 2, engine: 'Canvas composite (browser)' }),
+  T({ id: 'image-watermark', name: 'Add Image Watermark', description: 'Overlay text or logo watermarks on images.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: true, icon: Droplets, phase: 2, engine: 'Canvas composite (browser)' }),
   T({ id: 'image-metadata', name: 'Image Metadata Viewer', description: 'Inspect EXIF, dimensions, format and color profile.', category: 'image', accept: '.jpg,.jpeg,.png,.webp,.gif', acceptLabel: 'JPG, PNG, WebP, GIF', maxSizeMB: 50, multiple: false, icon: Info, phase: 2, engine: 'Canvas + File API (browser)' }),
   T({ id: 'ico-converter', name: 'ICO Converter', description: 'Create multi-size .ico favicons from any image.', category: 'image', accept: '.png,.jpg,.jpeg', acceptLabel: 'PNG, JPG', maxSizeMB: 20, multiple: true, icon: RefreshCw, phase: 2, engine: 'Canvas + ICO encoder (browser)' }),
   T({ id: 'image-ocr', name: 'Image to Text (OCR)', description: 'Extract text from photos and screenshots with on-device OCR in 13 languages, as plain text or a searchable PDF.', category: 'image', accept: '.jpg,.jpeg,.png,.webp', acceptLabel: 'JPG, PNG, WebP', maxSizeMB: 50, multiple: false, icon: Eye, phase: 4, engine: 'Tesseract.js OCR (browser)' }),
+  ...IMAGE_EXTRA_TOOLS.map((t) => T({ ...t, category: 'image', icon: IMAGE_EXTRA_ICONS[t.id], phase: 4 })),
   // ── Word (Phase 3) ─────────────────────────────────────────────
   T({ id: 'docx-to-pdf', name: 'DOCX to PDF', description: 'Convert Word documents to PDF with layout preserved.', category: 'word', accept: '.docx,.doc', acceptLabel: 'DOC / DOCX', maxSizeMB: 50, multiple: false, icon: FileText, popular: true, phase: 3, engine: 'Browser text-flow (LibreOffice server optional)' }),
   T({ id: 'pdf-to-docx', name: 'PDF to DOCX', description: 'Convert PDFs back to editable Word documents.', category: 'word', accept: '.pdf', acceptLabel: 'PDF', maxSizeMB: 100, multiple: false, icon: FileType2, phase: 4, engine: 'Browser text-flow (LibreOffice server optional)' }),
@@ -134,9 +148,10 @@ export const TOOLS: Tool[] = [
 
 /** Tools with a real, tested processing engine wired up (Phase 2). Everything else stays honestly disabled. */
 export const IMPLEMENTED_IDS = new Set([
-  'compress-image', 'resize-image', 'crop-image', 'jpg-to-png', 'png-to-jpg', 'webp-converter',
+  'compress-image', 'compress-image-kb', 'resize-image', 'crop-image', 'jpg-to-png', 'png-to-jpg', 'webp-converter',
   'jpg-to-webp', 'png-to-webp', 'rotate-image', 'flip-image', 'image-to-pdf', 'pdf-to-image',
   'image-watermark', 'image-metadata', 'ico-converter',
+  ...IMAGE_EXTRA_TOOLS.map((t) => t.id),
   'compress-pdf', 'merge-pdf', 'split-pdf', 'remove-pdf-pages', 'extract-pdf-pages',
   'organize-pdf', 'rotate-pdf', 'pdf-to-jpg', 'pdf-to-png', 'pdf-page-numbers', 'pdf-watermark',
   // Phase 3 — Word / PowerPoint / Excel / other, browser engines.
