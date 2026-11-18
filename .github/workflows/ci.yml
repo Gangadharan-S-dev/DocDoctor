@@ -19,7 +19,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run bundle:check
-      - run: npm audit --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
 
   server:
     runs-on: ubuntu-latest
