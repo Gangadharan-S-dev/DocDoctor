@@ -11,7 +11,6 @@ import {
   ImageToBase64Panel,
 } from './HeicAndConvertPanels'
 import {
-  RemoveBgPanel,
   ImageCollagePanel,
   GifMakerPanel,
 } from './CreativePanels'
@@ -72,15 +71,6 @@ export default function ImageExtraPanel({
           files={files}
           value={value.base64}
           onChange={(base64) => onChange({ ...value, base64 })}
-        />
-      )
-
-    case 'remove-background':
-      return (
-        <RemoveBgPanel
-          files={files}
-          value={value.bgRemove}
-          onChange={(bgRemove) => onChange({ ...value, bgRemove })}
         />
       )
 

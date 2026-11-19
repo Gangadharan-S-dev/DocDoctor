@@ -116,18 +116,22 @@ export default function UploadArea({ tool, files, onChange }: {
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files) }}
-        className={`cursor-pointer rounded-2xl border-2 border-dashed px-6 py-10 text-center transition sm:py-14 ${drag ? 'border-accent bg-accent-soft' : 'border-slate-300 bg-slate-50/60 hover:border-accent/60 hover:bg-accent-soft/50'}`}
+        className={`group cursor-pointer rounded-3xl border-2 border-dashed px-6 py-10 text-center transition duration-200 sm:py-14 ${
+          drag
+            ? 'scale-[1.01] border-blue-500 bg-blue-50/90 shadow-inner dark:bg-blue-500/15'
+            : 'border-slate-300/90 bg-slate-50/70 hover:border-blue-400 hover:bg-blue-50/40 dark:border-slate-700/90 dark:bg-[#0a1020] dark:hover:border-blue-500/60 dark:hover:bg-blue-500/10'
+        }`}
       >
-        <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-ink-950 text-white">
+        <span className="mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 text-white shadow-md shadow-blue-600/25 transition duration-200 group-hover:scale-105">
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
-        <p className="font-display text-lg font-bold text-ink-950">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>
-        <p className="mt-1 text-sm text-slate-500">
-          or browse from your device · paste with <kbd className="rounded bg-slate-200/80 px-1.5 py-0.5 text-xs font-semibold text-slate-700">Ctrl+V</kbd> · Max {tool.maxSizeMB} MB{tool.multiple ? ' · Multiple files supported' : ''}
+        <p className="font-display text-lg font-extrabold text-ink-950 dark:text-white">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>
+        <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+          or browse from your device · paste with <kbd className="rounded-lg border border-slate-200 bg-white px-1.5 py-0.5 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">Ctrl+V</kbd> · Max {tool.maxSizeMB} MB{tool.multiple ? ' · Multiple files supported' : ''}
         </p>
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <span className="btn-accent"><FileUp className="h-4 w-4" /> Browse files</span>
-          <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-600 shadow-2xs dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-300">
             <Clipboard className="h-3.5 w-3.5 text-accent" /> Paste supported
           </span>
         </div>

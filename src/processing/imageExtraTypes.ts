@@ -4,7 +4,6 @@ export type ImageExtraToolId =
   | 'blur-image'
   | 'image-converter'
   | 'image-to-base64'
-  | 'remove-background'
   | 'image-collage'
   | 'gif-maker'
 
@@ -188,16 +187,6 @@ export interface Base64Settings {
   quality: number
 }
 
-export type BgRemoveModelId = 'Xenova/modnet' | 'onnx-community/BiRefNet_lite-ONNX'
-
-export interface BgRemoveSettings {
-  modelId: BgRemoveModelId
-  bgMode: 'transparent' | 'color' | 'blur'
-  bgColor: string
-  bgBlurRadius: number
-  featherPx: number
-}
-
 export type CollageLayoutMode = 'grid' | 'horizontal' | 'vertical'
 
 export interface CollageSettings {
@@ -234,7 +223,6 @@ export interface ImageExtraSettings {
   blur: BlurSettings
   converter: ImageConverterSettings
   base64: Base64Settings
-  bgRemove: BgRemoveSettings
   collage: CollageSettings
   gif: GifMakerSettings
 }
@@ -287,13 +275,6 @@ export const defaultImageExtraSettings: ImageExtraSettings = {
     maxEdge: 0,
     outputFormat: 'keep',
     quality: 88,
-  },
-  bgRemove: {
-    modelId: 'Xenova/modnet',
-    bgMode: 'transparent',
-    bgColor: '#ffffff',
-    bgBlurRadius: 18,
-    featherPx: 1,
   },
   collage: {
     layout: 'grid',
@@ -390,18 +371,6 @@ export const IMAGE_EXTRA_TOOLS: Array<{
     maxSizeMB: 30,
     multiple: true,
     engine: 'FileReader + Canvas pre-scaler (browser)',
-  },
-  {
-    id: 'remove-background',
-    name: 'Remove Image Background',
-    description:
-      'Remove backgrounds on-device using open-license AI (MODNet / BiRefNet ONNX) with WebGPU/WASM acceleration, edge feathering, and custom backdrop replacement.',
-    accept: '.jpg,.jpeg,.png,.webp',
-    acceptLabel: 'JPG, PNG, WebP',
-    maxSizeMB: 40,
-    multiple: true,
-    engine: 'Transformers.js v4 ONNX WebGPU/WASM (browser)',
-    popular: true,
   },
   {
     id: 'image-collage',

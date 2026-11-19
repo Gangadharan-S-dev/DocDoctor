@@ -853,8 +853,8 @@ async function runImageCollage(
 }
 
 /**
- * Main dispatcher for all 8 extra image tools.
- * Dynamically imports heavy modules (`./heic`, `./bgRemove`, `./gif`) only when needed.
+ * Main dispatcher for all 7 extra image tools.
+ * Dynamically imports heavy modules (`./heic`, `./gif`) only when needed.
  */
 export async function runImageExtra(
   id: ImageExtraToolId,
@@ -889,19 +889,6 @@ export async function runImageExtra(
 
     case 'image-to-base64':
       return runImageToBase64(files, s.base64, proc)
-
-    case 'remove-background': {
-      if (files.length === 0) throw new Error('Please upload at least one image.')
-      const { removeImageBackground } = await import('./bgRemove')
-      const out: OutputFile[] = []
-      for (let i = 0; i < files.length; i++) {
-        checkAborted(proc.signal)
-        const { output } = await removeImageBackground(files[i], s.bgRemove)
-        out.push(output)
-        proc.onProgress(i + 1, files.length)
-      }
-      return out
-    }
 
     case 'image-collage':
       return runImageCollage(files, s.collage, proc)

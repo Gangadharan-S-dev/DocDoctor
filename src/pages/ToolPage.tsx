@@ -945,33 +945,60 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   }, [results, zipSearch])
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-      <nav aria-label="Breadcrumb" className="text-sm font-semibold text-slate-500">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+      <nav aria-label="Breadcrumb" className="text-sm font-semibold text-slate-500 dark:text-slate-400">
         <Link to="/" className="hover:text-accent">Home</Link> <span aria-hidden>/</span>{' '}
-        <Link to={`/category/${cat.id}`} className="hover:text-accent">{cat.name}</Link> <span aria-hidden>/</span> {tool.name}
+        <Link to={`/category/${cat.id}`} className="hover:text-accent">{cat.name}</Link> <span aria-hidden>/</span>{' '}
+        <span className="text-ink-950 dark:text-slate-200">{tool.name}</span>
       </nav>
 
-      <div className="mt-5 flex items-start gap-4">
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl" style={{ background: cat.soft, color: cat.color }}><Icon className="h-7 w-7" /></span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-3xl font-extrabold text-ink-950 sm:text-4xl">{tool.name}</h1>
-            <button type="button" aria-label={fav ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={fav}
-              onClick={() => { toggleFavorite(tool.id); setFav(!fav) }}
-              className={`rounded-lg p-2 transition hover:bg-amber-50 ${fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}>
-              <Star className={`h-6 w-6 ${fav ? 'fill-amber-400 text-amber-500' : ''}`} />
-            </button>
+      {/* Vibrant Bento Tool Header */}
+      <div
+        className="bento-card bento-dots mt-4 p-5 sm:p-7"
+        style={{ backgroundImage: `radial-gradient(460px circle at 96% 12%, ${cat.color}24, transparent 60%)` }}
+      >
+        <div className="flex flex-wrap items-start gap-4 sm:gap-5">
+          <span
+            className="flex h-15 w-15 shrink-0 items-center justify-center rounded-2xl text-white shadow-md"
+            style={{ backgroundColor: cat.color }}
+          >
+            <Icon className="h-7 w-7" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-display text-2xl font-extrabold tracking-tight text-ink-950 dark:text-white sm:text-4xl">
+                {tool.name}
+              </h1>
+              <button
+                type="button"
+                aria-label={fav ? 'Remove from favorites' : 'Add to favorites'}
+                aria-pressed={fav}
+                onClick={() => { toggleFavorite(tool.id); setFav(!fav) }}
+                className={`rounded-xl p-2 transition hover:bg-amber-50 dark:hover:bg-amber-500/15 ${fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500 dark:text-slate-600'}`}
+              >
+                <Star className={`h-5 w-5 ${fav ? 'fill-amber-400 text-amber-500' : ''}`} />
+              </button>
+            </div>
+            <p className="mt-1.5 max-w-2xl text-sm text-slate-600 dark:text-slate-300 sm:text-base">{tool.description}</p>
+            <div className="mt-3.5 flex flex-wrap gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold"
+                style={{ backgroundColor: `${cat.color}18`, color: cat.color }}
+              >
+                Accepts: {tool.acceptLabel}
+              </span>
+              <span className="chip">Max {tool.maxSizeMB} MB{tool.multiple ? ' · Batch' : ''}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/80 px-3 py-1 text-xs font-extrabold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+                <ShieldCheck className="h-3.5 w-3.5" /> {live ? '100% in your browser' : `Engine: ${tool.engine}`}
+              </span>
+            </div>
           </div>
-          <p className="mt-1.5 max-w-2xl text-slate-600">{tool.description}</p>
-          <p className="mt-3 flex flex-wrap gap-2">
-            <span className="chip">Accepts: {tool.acceptLabel}</span>
-            <span className="chip">Max {tool.maxSizeMB} MB{tool.multiple ? ' · Batch supported' : ''}</span>
-            <span className="chip">{live ? 'Runs 100% in your browser' : `Engine: ${tool.engine}`}</span>
-          </p>
         </div>
       </div>
 
-      <section className="card mt-8 p-5 sm:p-7" aria-label={`${tool.name} workspace`}>
+      {/* Split-Pane Studio Layout */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+      <section className="bento-card p-5 sm:p-7" aria-label={`${tool.name} workspace`}>
         <UploadArea tool={tool} files={files} onChange={handleFilesChange} />
 
         {tool.id === 'image-metadata' && meta && (
@@ -4220,19 +4247,50 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         )}
 
         {results.length > 0 && (
-          <div className="mt-6 rounded-2xl border border-teal-200 bg-teal-50/60 p-5" role="status">
-            <p className="font-display text-base font-bold text-ink-950">Done — {results.length} file{results.length > 1 ? 's' : ''} ready</p>
-            <p className="mt-1 text-sm text-slate-600">
-              {formatSize(totalIn)} → <strong className="text-ink-950">{formatSize(totalOut)}</strong>
-              {savings !== null && savings > 0 && <span className="ml-2 font-bold text-teal-700">Saved {savings}%</span>}
-              {savings !== null && savings <= 0 && (
-                <span className="ml-2 font-semibold text-slate-500">
-                  {tool.id.startsWith('compress-')
-                    ? '(File is already at optimal compression — preserved at original size)'
-                    : '(no size reduction for this file/settings)'}
+          <div className="animate-bento-pop mt-6 rounded-3xl border border-teal-200/90 bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/50 p-5 shadow-card dark:border-teal-500/30 dark:from-teal-500/10 dark:via-[#0e1525] dark:to-emerald-500/10 sm:p-6" role="status">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-teal-600 text-white shadow-sm">
+                  <FileCheck2 className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="font-display text-base font-extrabold text-ink-950 dark:text-white">
+                    Done — {results.length} file{results.length > 1 ? 's' : ''} ready
+                  </p>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    {formatSize(totalIn)} → <strong className="text-ink-950 dark:text-white">{formatSize(totalOut)}</strong>
+                    {savings !== null && savings <= 0 && (
+                      <span className="ml-2 font-semibold text-slate-500 dark:text-slate-400">
+                        {tool.id.startsWith('compress-')
+                          ? '(Already at optimal compression — preserved at original size)'
+                          : '(no size reduction for this file/settings)'}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              {savings !== null && savings > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-sm">
+                  Saved {savings}%
                 </span>
               )}
-            </p>
+            </div>
+
+            {/* Visual size-savings bar */}
+            {savings !== null && savings > 0 && (
+              <div className="mt-4">
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-500"
+                    style={{ width: `${Math.max(4, Math.min(100, 100 - savings))}%` }}
+                  />
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Output: {formatSize(totalOut)} ({Math.max(1, 100 - savings)}% of original)</span>
+                  <span className="text-teal-700 dark:text-teal-300">−{formatSize(Math.max(0, totalIn - totalOut))} smaller</span>
+                </div>
+              </div>
+            )}
 
             {/* Interactive Before/After image comparison */}
             {compareInUrl && outUrls[safeCompareIdx] && (
@@ -4505,6 +4563,60 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         )}
       </section>
 
+      {/* Sticky Right Studio Rail */}
+      <aside className="space-y-4 lg:sticky lg:top-24" aria-label="Tool studio info">
+        <div className="bento-card p-5">
+          <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Studio Guarantees</p>
+          <ul className="mt-3.5 space-y-3.5">
+            {[
+              { icon: ShieldCheck, color: '#0d9488', t: 'Private by default', d: live ? 'Runs locally in your browser — files never leave your device.' : 'Isolated temp folders; nothing stored permanently.' },
+              { icon: Clock3, color: '#2563eb', t: 'Auto-delete', d: 'Temp files are wiped immediately after processing (max 60 min).' },
+              { icon: FileCheck2, color: '#7c3aed', t: 'Verified output', d: 'Every result is checked non-empty before download unlocks.' },
+            ].map((f) => (
+              <li key={f.t} className="flex items-start gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${f.color}18`, color: f.color }}>
+                  <f.icon className="h-4 w-4" />
+                </span>
+                <div>
+                  <p className="text-xs font-extrabold text-ink-950 dark:text-white">{f.t}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{f.d}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:text-slate-400">
+            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><kbd className="font-extrabold">Ctrl+V</kbd> Paste file</span>
+            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><kbd className="font-extrabold">Ctrl+K</kbd> Switch tool</span>
+          </div>
+        </div>
+
+        {related.length > 0 && (
+          <div className="bento-card p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">More {cat.name}</p>
+              <Link to={`/category/${cat.id}`} className="text-[11px] font-extrabold" style={{ color: cat.color }}>All →</Link>
+            </div>
+            <ul className="mt-3 space-y-1.5">
+              {related.map((rt) => (
+                <li key={rt.id}>
+                  <Link
+                    to={`/tool/${rt.id}`}
+                    className="group flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${cat.color}16`, color: cat.color }}>
+                      <rt.icon className="h-4 w-4" />
+                    </span>
+                    <span className="truncate text-xs font-bold text-ink-950 group-hover:text-accent dark:text-slate-200">{rt.name}</span>
+                    <ArrowRight className="ml-auto h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-accent" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </aside>
+      </div>
+
       {/* In-tab PDF Preview Modal */}
       {pdfPreviewUrl && (
         <div
@@ -4515,42 +4627,32 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
           onClick={() => setPdfPreviewUrl(null)}
         >
           <div
-            className="relative flex h-[85vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-4 shadow-2xl"
+            className="relative flex h-[85vh] w-full max-w-4xl flex-col rounded-3xl bg-white p-4 shadow-2xl dark:bg-[#0e1525]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
-              <span className="font-display font-bold text-ink-950">PDF Document Preview</span>
+            <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2 dark:border-slate-800">
+              <span className="font-display font-bold text-ink-950 dark:text-white">PDF Document Preview</span>
               <button
                 type="button"
                 onClick={() => setPdfPreviewUrl(null)}
                 aria-label="Close"
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-ink-950"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-ink-950 dark:hover:bg-slate-800 dark:hover:text-white"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
             <iframe
               src={pdfPreviewUrl}
-              className="h-full w-full rounded-xl border border-slate-200"
+              className="h-full w-full rounded-2xl border border-slate-200 dark:border-slate-800"
               title="PDF Preview Frame"
             />
           </div>
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        {[
-          { icon: ShieldCheck, t: 'Private by default', d: live ? 'Phase 2 tools run entirely in your browser — files never leave your device.' : 'Isolated temp folders; nothing stored permanently.' },
-          { icon: Clock3, t: 'Auto-delete', d: 'Server-processed files are deleted after processing, max retention 60 minutes.' },
-          { icon: FileCheck2, t: 'Validated output', d: 'Success is only reported after the output file is verified non-empty.' },
-        ].map((f) => (
-          <div key={f.t} className="card p-5"><f.icon className="h-5 w-5 text-teal2" /><p className="mt-2.5 text-sm font-bold text-ink-950">{f.t}</p><p className="mt-1 text-sm text-slate-500">{f.d}</p></div>
-        ))}
-      </div>
-
       {related.length > 0 && (
         <section className="mt-12" aria-labelledby="related">
-          <h2 id="related" className="font-display text-xl font-extrabold text-ink-950">Related tools</h2>
+          <h2 id="related" className="font-display text-xl font-extrabold text-ink-950 dark:text-white">Related tools</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{related.map((t) => <ToolCard key={t.id} tool={t} />)}</div>
         </section>
       )}

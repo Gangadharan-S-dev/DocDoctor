@@ -24,18 +24,16 @@ import {
   uint8ToBase64,
   formatBase64Snippet,
 } from '../../src/processing/imageExtraMath'
-import { BG_REMOVE_CSP_ORIGINS } from '../../src/processing/bgRemove'
 import { resolveGifDimensions } from '../../src/processing/gif'
 
 describe('imageExtraTypes & registry metadata', () => {
-  it('defines all 8 required ImageExtraToolId entries with valid metadata', () => {
+  it('defines all 7 required ImageExtraToolId entries with valid metadata', () => {
     const expectedIds: ImageExtraToolId[] = [
       'passport-photo',
       'heic-to-jpg',
       'blur-image',
       'image-converter',
       'image-to-base64',
-      'remove-background',
       'image-collage',
       'gif-maker',
     ]
@@ -49,11 +47,10 @@ describe('imageExtraTypes & registry metadata', () => {
     }
   })
 
-  it('provides sensible default settings for all 8 tools', () => {
+  it('provides sensible default settings for all 7 tools', () => {
     expect(defaultImageExtraSettings.passport.dpi).toBe(300)
     expect(defaultImageExtraSettings.heic.outputFormat).toBe('image/jpeg')
     expect(defaultImageExtraSettings.blur.regions.length).toBeGreaterThan(0)
-    expect(defaultImageExtraSettings.bgRemove.modelId).toBe('Xenova/modnet')
     expect(PASSPORT_PRESETS.length).toBeGreaterThanOrEqual(8)
   })
 })
@@ -373,10 +370,7 @@ describe('collage layout, SVG dimension parser, Base64 formatter & helpers', () 
     expect(css).toContain('background-image: url("data:image/png;base64,SGk=");')
   })
 
-  it('exports CSP origins for background removal and resolves GIF dimensions', () => {
-    expect(BG_REMOVE_CSP_ORIGINS.connectSrc).toContain('https://huggingface.co')
-    expect(BG_REMOVE_CSP_ORIGINS.connectSrc).toContain('https://cdn.jsdelivr.net')
-
+  it('resolves GIF dimensions accurately', () => {
     const gifDims = resolveGifDimensions(1600, 900, {
       ...defaultImageExtraSettings.gif,
       outputWidth: 640,

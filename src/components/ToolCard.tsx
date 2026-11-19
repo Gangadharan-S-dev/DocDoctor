@@ -1,38 +1,97 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { ArrowRight, Star } from 'lucide-react'
+import { ArrowUpRight, Star } from 'lucide-react'
 import type { Tool } from '../data/tools'
-import { categoryById, isImplemented } from '../data/tools'
+import { categoryById } from '../data/tools'
 import { isFavorite, onPrefsChange, toggleFavorite } from '../lib/prefs'
+import { showToast } from '../lib/toast'
 
 export default function ToolCard({ tool }: { tool: Tool }) {
   const cat = categoryById(tool.category)
   const Icon = tool.icon
   const [fav, setFav] = useState(() => isFavorite(tool.id))
   useEffect(() => onPrefsChange(() => setFav(isFavorite(tool.id))), [tool.id])
+
+  const primaryFormat = tool.acceptLabel.split(',')[0].trim()
+
   return (
-    <Link to={`/tool/${tool.id}`} className="card group relative flex flex-col p-5 transition hover:-translate-y-0.5 hover:shadow-lift">
-      <span className="mb-4 flex items-start justify-between">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl" style={{ background: cat.soft, color: cat.color }}>
+    <Link
+      to={`/tool/${tool.id}`}
+      className="bento-card group flex flex-col p-5 hover:-translate-y-1 hover:border-slate-300/90 hover:shadow-lift dark:hover:border-slate-700"
+    >
+      {/* Subtle vibrant corner glow on hover */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-0 blur-2xl transition duration-300 group-hover:opacity-25 dark:group-hover:opacity-30"
+        style={{ backgroundColor: cat.color }}
+      />
+      {/* Crisp category color bar at top */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-6 top-0 h-[3px] rounded-b-full opacity-0 transition duration-200 group-hover:opacity-100"
+        style={{ backgroundColor: cat.color }}
+      />
+
+      <span className="relative mb-4 flex items-start justify-between">
+        <span
+          className="flex h-12 w-12 items-center justify-center rounded-2xl transition duration-200 group-hover:scale-105"
+          style={{ backgroundColor: `${cat.color}18`, color: cat.color }}
+        >
           <Icon className="h-5 w-5" aria-hidden />
         </span>
-        <button type="button" aria-label={fav ? `Remove ${tool.name} from favorites` : `Add ${tool.name} to favorites`} aria-pressed={fav}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleFavorite(tool.id) }}
-          className={`rounded-lg p-1.5 transition hover:bg-amber-50 ${fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}>
-          <Star className={`h-5 w-5 ${fav ? 'fill-amber-400 text-amber-500' : ''}`} />
+
+        <button
+          type="button"
+          aria-label={fav ? `Remove ${tool.name} from favorites` : `Add ${tool.name} to favorites`}
+          aria-pressed={fav}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            const next = !fav
+            toggleFavorite(tool.id)
+            showToast(next ? `Added ${tool.name} to favorites` : `Removed ${tool.name} from favorites`, next ? 'success' : 'info')
+          }}
+          className={`rounded-xl p-1.5 transition hover:bg-amber-50 dark:hover:bg-amber-500/15 ${
+            fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500 dark:text-slate-600'
+          }`}
+        >
+          <Star className={`h-4.5 w-4.5 ${fav ? 'fill-amber-400 text-amber-500' : ''}`} />
         </button>
       </span>
-      <span className="flex items-center gap-2">
-        <span className="font-display text-[15px] font-bold text-ink-950 dark:text-slate-100">{tool.name}</span>
-        {tool.popular && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-700"><Star className="h-3 w-3 fill-amber-500 text-amber-500" /> Popular</span>}
-      </span>
-      <span className="mt-1.5 line-clamp-2 flex-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{tool.description}</span>
-      <span className="mt-4 flex items-center justify-between">
-        <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-          {tool.acceptLabel} · ≤{tool.maxSizeMB} MB
-          {isImplemented(tool) && <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-extrabold normal-case tracking-normal text-teal-700 ring-1 ring-teal-200"><span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Live</span>}
+
+      <span className="relative flex items-center gap-2">
+        <span className="font-display text-[15px] font-bold tracking-tight text-ink-950 dark:text-white">
+          {tool.name}
         </span>
-        <span className="inline-flex items-center gap-1 text-sm font-bold text-accent">Open <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" /></span>
+        {tool.popular && (
+          <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-300">
+            Hot
+          </span>
+        )}
+      </span>
+
+      <span className="relative mt-1.5 line-clamp-2 flex-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+        {tool.description}
+      </span>
+
+      <span className="relative mt-5 flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800/80">
+        <span className="flex items-center gap-1.5">
+          <span
+            className="rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
+            style={{ backgroundColor: `${cat.color}15`, color: cat.color }}
+          >
+            {primaryFormat}
+          </span>
+          <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+            ≤{tool.maxSizeMB} MB
+          </span>
+        </span>
+        <span
+          className="inline-flex items-center gap-0.5 text-xs font-extrabold transition duration-200 group-hover:translate-x-0.5"
+          style={{ color: cat.color }}
+        >
+          Open <ArrowUpRight className="h-3.5 w-3.5" />
+        </span>
       </span>
     </Link>
   )

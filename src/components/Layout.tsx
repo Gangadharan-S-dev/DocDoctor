@@ -1,15 +1,52 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink, useNavigate } from 'react-router'
-import { Stethoscope, Menu, X, Search, ShieldCheck, ChevronDown, Moon, Sun } from 'lucide-react'
-import { CATEGORIES } from '../data/tools'
+import { Link, NavLink } from 'react-router'
+import { Stethoscope, Menu, X, Search, ShieldCheck, ChevronDown, Moon, Sun, Sparkles } from 'lucide-react'
+import { CATEGORIES, TOOLS } from '../data/tools'
 import { LANGS, useI18n, type Lang } from '../lib/i18n'
 import DeveloperContact from './DeveloperContact'
+import CommandPalette from './CommandPalette'
+import Toaster from './Toaster'
+import GlobalDropPortal from './GlobalDropPortal'
+import QuickDock from './QuickDock'
+import { showToast } from '../lib/toast'
+
+type AccentId = 'cobalt' | 'coral' | 'emerald' | 'violet'
+const ACCENTS: { id: AccentId; label: string; dot: string }[] = [
+  { id: 'cobalt', label: 'Cobalt', dot: '#2563eb' },
+  { id: 'coral', label: 'Coral', dot: '#f43f5e' },
+  { id: 'emerald', label: 'Emerald', dot: '#059669' },
+  { id: 'violet', label: 'Violet', dot: '#7c3aed' },
+]
+
+function useAccent(): [AccentId, (next: AccentId) => void] {
+  const [accent, setAccentState] = useState<AccentId>(() => {
+    try {
+      const saved = localStorage.getItem('docdoctor:accent') as AccentId | null
+      if (saved && ACCENTS.some((a) => a.id === saved)) return saved
+    } catch { /* ignore */ }
+    return 'cobalt'
+  })
+  useEffect(() => {
+    document.documentElement.dataset.accent = accent
+    try { localStorage.setItem('docdoctor:accent', accent) } catch { /* ignore */ }
+  }, [accent])
+  const setAccent = (next: AccentId) => {
+    setAccentState(next)
+    const meta = ACCENTS.find((a) => a.id === next)
+    if (meta) showToast(`Studio accent: ${meta.label}`, 'accent')
+  }
+  return [accent, setAccent]
+}
 
 export function Logo() {
   return (
-    <Link to="/" className="flex items-center gap-2.5" aria-label="DocDoctor home">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-950 text-white dark:bg-white dark:text-ink-950"><Stethoscope className="h-5 w-5" /></span>
-      <span className="font-display text-xl font-extrabold tracking-tight text-ink-950 dark:text-white">Doc<span className="text-accent">Doctor</span></span>
+    <Link to="/" className="group flex items-center gap-2.5" aria-label="DocDoctor home">
+      <span className="brand-grad flex h-10 w-10 items-center justify-center rounded-2xl text-white shadow-md transition duration-200 group-hover:scale-105">
+        <Stethoscope className="h-5 w-5" />
+      </span>
+      <span className="font-display text-xl font-extrabold tracking-tight text-ink-950 dark:text-white">
+        Doc<span className="brand-text-grad">Doctor</span>
+      </span>
     </Link>
   )
 }
@@ -31,76 +68,210 @@ function useTheme(): [boolean, () => void] {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [dark, toggleTheme] = useTheme()
+  const [accent, setAccent] = useAccent()
   const { lang, setLang, t } = useI18n()
-  const navigate = useNavigate()
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const linkCls = ({ isActive }: { isActive: boolean }) =>
-    `rounded-lg px-3 py-2 text-sm font-bold transition ${isActive ? 'bg-slate-100 text-ink-950 dark:bg-ink-800 dark:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-ink-950 dark:text-slate-300 dark:hover:bg-ink-800 dark:hover:text-white'}`
+    `rounded-xl px-3.5 py-2 text-sm font-bold transition ${
+      isActive
+        ? 'bg-ink-950 text-white shadow-xs dark:bg-white dark:text-ink-950'
+        : 'text-slate-600 hover:bg-slate-100/80 hover:text-ink-950 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-white'
+    }`
 
   return (
     <div className="flex min-h-screen flex-col">
-      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-ink-950 focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-700/60 dark:bg-ink-950/90">
-        <div className="mx-auto flex h-[68px] max-w-7xl items-center gap-3 px-4 sm:px-6">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-ink-950 focus:px-4 focus:py-2 focus:text-white">
+        Skip to content
+      </a>
+
+      <header className="glass-bar sticky top-0 z-40">
+        <div className="mx-auto flex h-[72px] max-w-7xl items-center gap-3 px-4 sm:px-6">
           <Logo />
-          <nav className="ml-4 hidden items-center gap-1 lg:flex" aria-label="Primary">
+
+          <nav className="ml-3 hidden items-center gap-1 lg:flex" aria-label="Primary">
             <NavLink to="/" end className={linkCls}>{t('nav.home')}</NavLink>
             <NavLink to="/tools" className={linkCls}>{t('nav.allTools')}</NavLink>
             <div className="group relative">
-              <button type="button" className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-ink-950 dark:text-slate-300 dark:hover:bg-ink-800 dark:hover:text-white">{t('nav.categories')} <ChevronDown className="h-4 w-4" /></button>
-              <div className="invisible absolute left-0 top-full w-72 rounded-2xl border border-slate-200 bg-white p-2 opacity-0 shadow-lift transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 dark:border-slate-700 dark:bg-ink-900">
-                {CATEGORIES.map((c) => (
-                  <Link key={c.id} to={`/category/${c.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-ink-800">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: c.soft, color: c.color }}><c.icon className="h-4.5 w-4.5" /></span>
-                    <span><span className="block text-sm font-bold text-ink-950 dark:text-slate-100">{c.name}</span><span className="block text-xs text-slate-500 dark:text-slate-400">{c.tagline}</span></span>
-                  </Link>
-                ))}
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-xl px-3.5 py-2 text-sm font-bold text-slate-600 transition hover:bg-slate-100/80 hover:text-ink-950 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-white"
+              >
+                {t('nav.categories')} <ChevronDown className="h-4 w-4 transition group-hover:rotate-180" />
+              </button>
+              <div className="invisible absolute left-0 top-full pt-2 opacity-0 transition duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                <div className="grid w-[520px] grid-cols-2 gap-2 rounded-3xl border border-slate-200/90 bg-white/95 p-3 shadow-lift backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0e1525]/95">
+                  {CATEGORIES.map((c) => {
+                    const count = TOOLS.filter((tool) => tool.category === c.id).length
+                    return (
+                      <Link
+                        key={c.id}
+                        to={`/category/${c.id}`}
+                        className="group/item flex items-center gap-3 rounded-2xl p-3 transition hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                      >
+                        <span
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition group-hover/item:scale-105"
+                          style={{ backgroundColor: `${c.color}18`, color: c.color }}
+                        >
+                          <c.icon className="h-5 w-5" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-sm font-bold text-ink-950 dark:text-slate-100">{c.name}</span>
+                            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-extrabold" style={{ backgroundColor: `${c.color}18`, color: c.color }}>
+                              {count}
+                            </span>
+                          </span>
+                          <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{c.tagline}</span>
+                        </span>
+                      </Link>
+                    )
+                  })}
+                </div>
               </div>
             </div>
             <NavLink to="/about" className={linkCls}>{t('nav.about')}</NavLink>
           </nav>
-          <form className="ml-auto hidden max-w-xs flex-1 md:block" role="search" onSubmit={(e) => { e.preventDefault(); navigate(`/tools?q=${encodeURIComponent(q)}`) }}>
-            <label className="relative block">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <span className="sr-only">Search tools</span>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('nav.searchPlaceholder')} className="input py-2.5 pl-9" />
-            </label>
-          </form>
-          <span className="chip ml-auto hidden shrink-0 sm:inline-flex md:ml-0"><ShieldCheck className="h-3.5 w-3.5 text-teal2" /> {t('nav.free')}</span>
+
+          {/* Command Palette Trigger */}
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Search tools (Ctrl+K)"
+            className="ml-auto flex h-10 flex-1 items-center gap-2.5 rounded-2xl border border-slate-200/90 bg-slate-100/70 px-3.5 text-left text-sm font-semibold text-slate-500 transition hover:border-accent/40 hover:bg-white hover:text-ink-950 hover:shadow-xs dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-400 dark:hover:border-blue-500/40 dark:hover:bg-[#162238] dark:hover:text-white md:max-w-[280px]"
+          >
+            <Search className="h-4 w-4 shrink-0 text-accent" />
+            <span className="truncate">{t('nav.searchPlaceholder')}</span>
+            <kbd className="ml-auto hidden shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-slate-500 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 sm:inline-block">
+              Ctrl K
+            </kbd>
+          </button>
+
+          <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/80 px-3 py-1.5 text-xs font-extrabold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300 xl:inline-flex">
+            <ShieldCheck className="h-3.5 w-3.5" /> {t('nav.free')}
+          </span>
+
+          {/* Arc-style Studio Accent Picker */}
+          <div className="hidden items-center gap-1 rounded-xl border border-slate-200/80 bg-white px-2 py-1.5 dark:border-slate-700/80 dark:bg-[#111a2e] sm:flex" role="group" aria-label="Studio accent color">
+            {ACCENTS.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => setAccent(a.id)}
+                title={`${a.label} accent`}
+                aria-label={`${a.label} accent`}
+                aria-pressed={accent === a.id}
+                className={`h-4 w-4 rounded-full transition duration-150 ${
+                  accent === a.id ? 'scale-115 ring-2 ring-slate-900 ring-offset-2 dark:ring-white dark:ring-offset-[#111a2e]' : 'opacity-65 hover:scale-110 hover:opacity-100'
+                }`}
+                style={{ backgroundColor: a.dot }}
+              />
+            ))}
+          </div>
+
           <label className="sr-only" htmlFor="lang-select">Language</label>
-          <select id="lang-select" value={lang} onChange={(e) => setLang(e.target.value as Lang)} className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:bg-ink-900 dark:text-slate-200" aria-label="Language">
+          <select
+            id="lang-select"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+            className="rounded-xl border border-slate-200/90 bg-white px-2.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200"
+            aria-label="Language"
+          >
             {LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
-          <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-ink-800">
-            {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800"
+          >
+            {dark ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
           </button>
-          <button type="button" className="rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-ink-800 lg:hidden" aria-label="Toggle menu" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}</button>
+
+          <button
+            type="button"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200 lg:hidden"
+            aria-label="Toggle menu"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
         </div>
+
         {open && (
-          <nav className="border-t border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-ink-950 lg:hidden" aria-label="Mobile">
-            <NavLink to="/" end onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2.5 text-sm font-bold">{t('nav.home')}</NavLink>
-            <NavLink to="/tools" onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2.5 text-sm font-bold">{t('nav.allTools')}</NavLink>
-            {CATEGORIES.map((c) => <NavLink key={c.id} to={`/category/${c.id}`} onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2.5 text-sm font-bold">{c.name}</NavLink>)}
-            <NavLink to="/about" onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2.5 text-sm font-bold">{t('nav.about')}</NavLink>
+          <nav className="border-t border-slate-200/80 bg-white/95 px-4 py-4 backdrop-blur-xl dark:border-slate-800 dark:bg-[#0b1120]/95 lg:hidden" aria-label="Mobile">
+            <div className="grid grid-cols-2 gap-2">
+              <NavLink to="/" end onClick={() => setOpen(false)} className="rounded-2xl bg-slate-100/80 px-4 py-3 text-sm font-bold text-ink-950 dark:bg-slate-800/70 dark:text-white">{t('nav.home')}</NavLink>
+              <NavLink to="/tools" onClick={() => setOpen(false)} className="rounded-2xl bg-slate-100/80 px-4 py-3 text-sm font-bold text-ink-950 dark:bg-slate-800/70 dark:text-white">{t('nav.allTools')}</NavLink>
+              {CATEGORIES.map((c) => (
+                <NavLink
+                  key={c.id}
+                  to={`/category/${c.id}`}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-sm font-bold"
+                  style={{ backgroundColor: `${c.color}14`, color: c.color }}
+                >
+                  <c.icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{c.name.replace(' Tools', '')}</span>
+                </NavLink>
+              ))}
+              <NavLink to="/about" onClick={() => setOpen(false)} className="col-span-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-center text-sm font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">{t('nav.about')}</NavLink>
+            </div>
           </nav>
         )}
       </header>
 
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <GlobalDropPortal />
+      <QuickDock onOpenSearch={() => setPaletteOpen(true)} />
+      <Toaster />
+
       <main id="main" className="flex-1">{children}</main>
 
-      <footer className="border-t border-slate-200 bg-ink-950 text-slate-300">
+      <footer className="mt-8 border-t border-slate-200/80 bg-[#070b14] pb-20 text-slate-300 dark:border-slate-800/90">
+        <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-blue-500 via-50% to-teal-400" />
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:grid-cols-2 sm:px-6 lg:grid-cols-5">
           <div className="lg:col-span-2">
-            <p className="font-display text-xl font-extrabold text-white">Doc<span className="text-accent">Doctor</span></p>
-            <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">Every file. Every tool. One place. Free file tools with automatic deletion — files are processed temporarily and never stored permanently.</p>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-white">
+                <Stethoscope className="h-4.5 w-4.5" />
+              </span>
+              <p className="font-display text-xl font-extrabold text-white">Doc<span className="text-blue-400">Doctor</span></p>
+            </div>
+            <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
+              Every file. Every tool. One vibrant browser studio. Free file tools with local WASM processing and automatic deletion.
+            </p>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="mt-5 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-blue-400" /> Quick-launch any tool (Ctrl+K)
+            </button>
           </div>
           {CATEGORIES.slice(0, 3).map((c) => (
             <nav key={c.id} aria-label={c.name}>
-              <p className="text-sm font-bold text-white">{c.name}</p>
+              <p className="flex items-center gap-2 text-sm font-bold text-white">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: c.color }} />
+                {c.name}
+              </p>
               <ul className="mt-3 space-y-2 text-sm">
-                <li><Link className="hover:text-white" to={`/category/${c.id}`}>View all {c.name.toLowerCase()}</Link></li>
-                <li><Link className="hover:text-white" to="/tools">All tools</Link></li>
+                <li><Link className="text-slate-400 transition hover:text-white" to={`/category/${c.id}`}>View all {c.name.toLowerCase()}</Link></li>
+                <li><Link className="text-slate-400 transition hover:text-white" to="/tools">All {TOOLS.length} tools</Link></li>
               </ul>
             </nav>
           ))}
@@ -110,7 +281,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span>© {new Date().getFullYear()} DocDoctor. Free to use.</span>
             <Link to="/privacy" className="hover:text-white">Privacy</Link>
             <Link to="/about" className="hover:text-white">About</Link>
-            <span className="ml-auto inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> Auto-delete after processing · Max retention 60 min</span>
+            <span className="ml-auto inline-flex items-center gap-1.5 text-teal-300">
+              <ShieldCheck className="h-3.5 w-3.5" /> On-device processing · Auto-delete ≤60 min
+            </span>
           </div>
         </div>
         <DeveloperContact />

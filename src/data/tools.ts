@@ -3,7 +3,7 @@ import {
   FileArchive, Scissors, Merge, RotateCw, Lock, Unlock, Hash, Droplets,
   Wrench, PenLine, Stamp, Layers, FlipHorizontal2, Crop,
   Maximize2, RefreshCw, Info, FileImage, FileSpreadsheet, FileCode2,
-  Braces, FileJson2, ArrowLeftRight, Eye, EyeOff, UserCheck, Wand2, type LucideIcon,
+  Braces, FileJson2, ArrowLeftRight, Eye, EyeOff, UserCheck, type LucideIcon,
 } from 'lucide-react'
 import { IMAGE_EXTRA_TOOLS, type ImageExtraToolId } from '../processing/imageExtraTypes'
 
@@ -13,7 +13,6 @@ const IMAGE_EXTRA_ICONS: Record<ImageExtraToolId, LucideIcon> = {
   'blur-image': EyeOff,
   'image-converter': ArrowLeftRight,
   'image-to-base64': FileCode2,
-  'remove-background': Wand2,
   'image-collage': Layers,
   'gif-maker': FileImage,
 }
