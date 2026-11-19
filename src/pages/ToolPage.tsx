@@ -983,7 +983,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       >
         <div className="flex flex-wrap items-start gap-4 sm:gap-5">
           <span
-            className="flex h-15 w-15 shrink-0 items-center justify-center rounded-2xl text-white shadow-md"
+            className="icon-3d flex h-15 w-15 shrink-0 items-center justify-center rounded-2xl text-white"
             style={{ backgroundColor: cat.color }}
           >
             <Icon className="h-7 w-7" />

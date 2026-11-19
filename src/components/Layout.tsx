@@ -41,7 +41,7 @@ function useAccent(): [AccentId, (next: AccentId) => void] {
 export function Logo() {
   return (
     <Link to="/" className="group flex items-center gap-2.5" aria-label="DocDoctor home">
-      <span className="brand-grad flex h-10 w-10 items-center justify-center rounded-2xl text-white shadow-md transition duration-200 group-hover:scale-105">
+      <span className="brand-grad icon-3d flex h-10 w-10 items-center justify-center rounded-2xl text-white transition duration-200 group-hover:scale-105">
         <Stethoscope className="h-5 w-5" />
       </span>
       <span className="font-display text-xl font-extrabold tracking-tight text-ink-950 dark:text-white">

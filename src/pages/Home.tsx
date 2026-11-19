@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   Search, ShieldCheck, MousePointerClick, Settings2, Download, Lock, Timer,
-  ArrowRight, ArrowUpRight, FileCheck2, CloudUpload, Sparkles, X, File as FileIcon, Zap,
+  ArrowRight, ArrowUpRight, FileCheck2, Sparkles, X, File as FileIcon, Zap,
 } from 'lucide-react'
 import { CATEGORIES, TOOLS, categoryById, formatSize, popularTools, toolById, toolsByCategory, type CategoryId, type Tool } from '../data/tools'
 import ToolCard from '../components/ToolCard'
 import {
-  ExcelBentoArt, FormatMarquee, ImageBentoArt, LivePlayground, OtherBentoArt,
-  PdfBentoArt, PptBentoArt, Reveal, SpotlightCard, WordBentoArt,
+  ExcelBentoArt, FormatMarquee, Hero3DFileStack, ImageBentoArt, LivePlayground, OtherBentoArt,
+  PdfBentoArt, PptBentoArt, PrivacyGlassVault3D, Reveal, SpotlightCard, WordBentoArt,
 } from '../components/BentoVisuals'
 import { getFavorites, getRecent, onPrefsChange } from '../lib/prefs'
 import { suggestToolsForFile } from '../lib/smartSuggest'
@@ -237,14 +237,12 @@ export default function Home() {
                   onDrop={(e) => { e.preventDefault(); setDragActive(false); handleSmartPick(e.dataTransfer.files) }}
                   className={`mt-4 cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition duration-200 ${
                     dragActive
-                      ? 'scale-[1.01] border-blue-500 bg-blue-50/90 dark:bg-blue-500/15'
-                      : 'border-slate-300/90 bg-slate-50/80 hover:border-blue-400 hover:bg-blue-50/40 dark:border-slate-700 dark:bg-[#0a1020] dark:hover:border-blue-500/60'
+                      ? 'scale-[1.01] border-accent bg-accent-soft/80 ring-4 ring-accent/15'
+                      : 'border-slate-300/90 bg-slate-50/80 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700 dark:bg-[#0a1020] dark:hover:border-accent/60'
                   }`}
                 >
-                  <span className="brand-grad animate-bento-float mx-auto flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-md">
-                    <CloudUpload className="h-6 w-6" />
-                  </span>
-                  <p className="mt-3 font-display text-sm font-extrabold text-ink-950 dark:text-white">
+                  <Hero3DFileStack dragActive={dragActive} />
+                  <p className="mt-2 font-display text-sm font-extrabold text-ink-950 dark:text-white">
                     Drop any PDF, image, Word or Excel file
                   </p>
                   <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1.5">
@@ -366,7 +364,7 @@ export default function Home() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <span
-                        className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm transition duration-200 group-hover:scale-105"
+                        className="icon-3d flex h-14 w-14 items-center justify-center rounded-2xl transition duration-200 group-hover:scale-105"
                         style={{ backgroundColor: c.color, color: '#fff' }}
                       >
                         <c.icon className="h-7 w-7" />
@@ -424,7 +422,7 @@ export default function Home() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       <span
-                        className="flex h-12 w-12 items-center justify-center rounded-2xl shadow-xs transition duration-200 group-hover:scale-105"
+                        className="icon-3d flex h-12 w-12 items-center justify-center rounded-2xl transition duration-200 group-hover:scale-105"
                         style={{ backgroundColor: c.color, color: '#fff' }}
                       >
                         <c.icon className="h-6 w-6" />
@@ -462,6 +460,7 @@ export default function Home() {
           {/* Full-width Companion Bento Strip: Other File Tools */}
           <SpotlightCard
             glowColor={`${otherCat.color}1f`}
+            tilt={false}
             className="bento-card group p-6 hover:shadow-lift lg:col-span-6"
             style={{
               backgroundImage: `radial-gradient(420px circle at 5% 50%, ${otherCat.color}1c, transparent 60%)`,
@@ -470,7 +469,7 @@ export default function Home() {
             <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
               <div className="flex items-center gap-4">
                 <span
-                  className="flex h-13 w-13 shrink-0 items-center justify-center rounded-2xl shadow-xs transition group-hover:scale-105"
+                  className="icon-3d flex h-13 w-13 shrink-0 items-center justify-center rounded-2xl transition group-hover:scale-105"
                   style={{ backgroundColor: otherCat.color, color: '#fff' }}
                 >
                   <otherCat.icon className="h-6 w-6" />
@@ -583,7 +582,7 @@ export default function Home() {
           ].map((s) => (
             <li key={s.n} className="bento-card p-6">
               <div className="flex items-center justify-between">
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-sm" style={{ backgroundColor: s.color }}>
+                <span className="icon-3d flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: s.color }}>
                   <s.icon className="h-6 w-6" />
                 </span>
                 <span className="font-display text-4xl font-extrabold tracking-tight opacity-15" style={{ color: s.color }}>{s.n}</span>
@@ -595,16 +594,17 @@ export default function Home() {
         </ol>
       </section>
 
-      {/* ── Vibrant Privacy Bento Banner ──────────────────────────────── */}
+      {/* ── Vibrant Privacy Bento Banner with 3D Rotating Glass Vault ─── */}
       <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6" aria-labelledby="privacy">
         <Reveal>
         <SpotlightCard
           glowColor="rgba(59, 130, 246, 0.22)"
+          tilt={false}
           className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#090e1a] px-6 py-10 text-white shadow-lift sm:px-10 sm:py-12"
         >
           <span aria-hidden className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-blue-600/25 blur-3xl" />
           <span aria-hidden className="pointer-events-none absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-teal-500/20 blur-3xl" />
-          <div className="relative grid gap-8 lg:grid-cols-[1.1fr_.9fr] lg:items-center">
+          <div className="relative grid gap-8 lg:grid-cols-[1.05fr_auto_.95fr] lg:items-center">
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-400/30 bg-teal-400/10 px-3 py-1 text-xs font-extrabold text-teal-300">
                 <Lock className="h-3.5 w-3.5" /> Zero-knowledge architecture
@@ -620,16 +620,22 @@ export default function Home() {
               </Link>
             </div>
 
-            <ul className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+            <PrivacyGlassVault3D />
+
+            <ul className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
               {[
                 { icon: Zap, label: 'On-device WASM', sub: 'Instant local speed', color: '#3b82f6' },
                 { icon: Timer, label: 'Auto-delete', sub: '≤60 min hard cap', color: '#14b8a6' },
                 { icon: FileCheck2, label: 'Real engines', sub: 'Verified outputs', color: '#a855f7' },
               ].map((item) => (
-                <li key={item.label} className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
-                  <item.icon className="h-5 w-5" style={{ color: item.color }} />
-                  <p className="mt-2.5 text-sm font-extrabold text-white">{item.label}</p>
-                  <p className="mt-0.5 text-xs text-slate-400">{item.sub}</p>
+                <li key={item.label} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm">
+                  <span className="icon-3d flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: item.color }}>
+                    <item.icon className="h-4.5 w-4.5" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-extrabold text-white">{item.label}</p>
+                    <p className="text-xs text-slate-400">{item.sub}</p>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ArrowUpRight, Star } from 'lucide-react'
 import type { Tool } from '../data/tools'
@@ -9,16 +9,67 @@ import { showToast } from '../lib/toast'
 export default function ToolCard({ tool }: { tool: Tool }) {
   const cat = categoryById(tool.category)
   const Icon = tool.icon
+  const cardRef = useRef<HTMLAnchorElement>(null)
+  const rafRef = useRef<number>(0)
   const [fav, setFav] = useState(() => isFavorite(tool.id))
+
   useEffect(() => onPrefsChange(() => setFav(isFavorite(tool.id))), [tool.id])
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
   const primaryFormat = tool.acceptLabel.split(',')[0].trim()
 
+  const handleMove = (e: React.PointerEvent<HTMLAnchorElement>) => {
+    if (e.pointerType === 'touch') return
+    const el = cardRef.current
+    if (!el) return
+    const clientX = e.clientX
+    const clientY = e.clientY
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      const x = clientX - rect.left
+      const y = clientY - rect.top
+      const nx = (x / rect.width - 0.5) * 2
+      const ny = (y / rect.height - 0.5) * 2
+      el.dataset.tilting = 'true'
+      el.style.setProperty('--mx', `${x.toFixed(1)}px`)
+      el.style.setProperty('--my', `${y.toFixed(1)}px`)
+      el.style.setProperty('--spot-o', '1')
+      el.style.setProperty('--rx', `${(-ny * 4.5).toFixed(2)}deg`)
+      el.style.setProperty('--ry', `${(nx * 4.5).toFixed(2)}deg`)
+      el.style.setProperty('--ty', '-4px')
+    })
+  }
+
+  const handleLeave = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const el = cardRef.current
+    if (!el) return
+    delete el.dataset.tilting
+    el.style.setProperty('--spot-o', '0')
+    el.style.setProperty('--rx', '0deg')
+    el.style.setProperty('--ry', '0deg')
+    el.style.setProperty('--ty', '0px')
+  }
+
   return (
     <Link
+      ref={cardRef}
       to={`/tool/${tool.id}`}
-      className="bento-card group flex flex-col p-5 hover:-translate-y-1 hover:border-slate-300/90 hover:shadow-lift dark:hover:border-slate-700"
+      onPointerMove={handleMove}
+      onPointerLeave={handleLeave}
+      className="bento-card tilt-card group flex flex-col p-5 hover:border-slate-300/90 hover:shadow-lift dark:hover:border-slate-700"
     >
+      {/* Dynamic cursor-tracking specular glass glare */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-300"
+        style={{
+          opacity: 'var(--spot-o, 0)',
+          background: 'radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.28), transparent 60%)',
+        }}
+      />
       {/* Subtle vibrant corner glow on hover */}
       <span
         aria-hidden
@@ -34,8 +85,8 @@ export default function ToolCard({ tool }: { tool: Tool }) {
 
       <span className="relative mb-4 flex items-start justify-between">
         <span
-          className="flex h-12 w-12 items-center justify-center rounded-2xl transition duration-200 group-hover:scale-105"
-          style={{ backgroundColor: `${cat.color}18`, color: cat.color }}
+          className="icon-3d flex h-12 w-12 items-center justify-center rounded-2xl text-white transition duration-200 group-hover:-translate-y-0.5 group-hover:scale-105"
+          style={{ background: `linear-gradient(145deg, ${cat.color}, ${cat.color}dd)` }}
         >
           <Icon className="h-5 w-5" aria-hidden />
         </span>
@@ -74,7 +125,7 @@ export default function ToolCard({ tool }: { tool: Tool }) {
         {tool.description}
       </span>
 
-      <span className="relative mt-5 flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800/80">
+      <span className="relative mt-5 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800/80">
         <span className="flex items-center gap-1.5">
           <span
             className="rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"

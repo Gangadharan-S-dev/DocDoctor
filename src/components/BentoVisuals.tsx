@@ -1,44 +1,93 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { ArrowRight, GripVertical, Sparkles, EyeOff, FileArchive } from 'lucide-react'
+import { ArrowRight, GripVertical, Sparkles, EyeOff, FileArchive, Lock, ShieldCheck, CloudUpload } from 'lucide-react'
 
-/* ── 1. Cursor-Tracking Spotlight Bento Card ─────────────────────────────── */
+/* ── 1. Zero-Re-Render 3D Tilt + Specular Spotlight Bento Card ───────────── */
 export function SpotlightCard({
   children,
   className = '',
   glowColor = 'rgba(37, 99, 235, 0.16)',
   style,
+  tilt = true,
+  maxTilt = 3,
 }: {
   children: React.ReactNode
   className?: string
   glowColor?: string
   style?: React.CSSProperties
+  tilt?: boolean
+  maxTilt?: number
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
+  const rafRef = useRef<number>(0)
+
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
   const handleMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const rect = ref.current?.getBoundingClientRect()
-    if (!rect) return
-    setPos({ x: e.clientX - rect.left, y: e.clientY - rect.top, active: true })
+    if (e.pointerType === 'touch') return
+    const el = ref.current
+    if (!el) return
+    const clientX = e.clientX
+    const clientY = e.clientY
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      const x = clientX - rect.left
+      const y = clientY - rect.top
+      el.style.setProperty('--mx', `${x.toFixed(1)}px`)
+      el.style.setProperty('--my', `${y.toFixed(1)}px`)
+      el.style.setProperty('--spot-o', '1')
+      if (tilt) {
+        const nx = (x / rect.width - 0.5) * 2
+        const ny = (y / rect.height - 0.5) * 2
+        el.dataset.tilting = 'true'
+        el.style.setProperty('--rx', `${(-ny * maxTilt).toFixed(2)}deg`)
+        el.style.setProperty('--ry', `${(nx * maxTilt).toFixed(2)}deg`)
+        el.style.setProperty('--ty', '-3px')
+      }
+    })
+  }
+
+  const handleLeave = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const el = ref.current
+    if (!el) return
+    delete el.dataset.tilting
+    el.style.setProperty('--spot-o', '0')
+    el.style.setProperty('--rx', '0deg')
+    el.style.setProperty('--ry', '0deg')
+    el.style.setProperty('--ty', '0px')
   }
 
   return (
     <div
       ref={ref}
       onPointerMove={handleMove}
-      onPointerLeave={() => setPos((p) => ({ ...p, active: false }))}
-      className={className}
+      onPointerLeave={handleLeave}
+      className={`${tilt ? 'tilt-card ' : ''}${className}`}
       style={style}
     >
+      {/* Dynamic color spotlight */}
       <span
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-300"
         style={{
-          opacity: pos.active ? 1 : 0,
-          background: `radial-gradient(360px circle at ${pos.x}px ${pos.y}px, ${glowColor}, transparent 68%)`,
+          opacity: 'var(--spot-o, 0)',
+          background: `radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), ${glowColor}, transparent 68%)`,
         }}
       />
+      {/* Subtle 3D glass specular sheen */}
+      {tilt && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-300"
+          style={{
+            opacity: 'calc(var(--spot-o, 0) * 0.45)',
+            background: 'radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.26), transparent 62%)',
+          }}
+        />
+      )}
       <div className="relative z-10 flex h-full flex-col justify-between">{children}</div>
     </div>
   )
@@ -120,105 +169,263 @@ export function FormatMarquee() {
   )
 }
 
-/* ── 4. Custom Animated SVG Mini-Visuals for Featured Bento Cards ────────── */
+/* ── 4. 3D Isometric Category Sculptures for Bento Cards ─────────────────── */
 export function PdfBentoArt() {
   return (
-    <div className="pointer-events-none relative hidden h-20 w-28 shrink-0 sm:block" aria-hidden>
-      {/* Back page */}
-      <div className="absolute right-1 top-2 h-16 w-12 rotate-6 rounded-xl border border-rose-200/90 bg-rose-50 shadow-xs transition duration-300 group-hover:translate-x-1 group-hover:rotate-12 dark:border-rose-500/30 dark:bg-rose-500/15" />
-      {/* Middle page */}
-      <div className="absolute right-5 top-1 h-16 w-12 -rotate-3 rounded-xl border border-rose-200 bg-white p-2 shadow-xs transition duration-300 group-hover:-translate-y-1 group-hover:-rotate-6 dark:border-slate-700 dark:bg-[#131d33]">
-        <div className="h-1.5 w-6 rounded-full bg-rose-400/70" />
-        <div className="mt-1.5 h-1 w-8 rounded-full bg-slate-200 dark:bg-slate-700" />
-        <div className="mt-1 h-1 w-7 rounded-full bg-slate-200 dark:bg-slate-700" />
-        <div className="mt-1 h-1 w-5 rounded-full bg-slate-200 dark:bg-slate-700" />
+    <div className="scene-3d pointer-events-none relative hidden h-22 w-30 shrink-0 sm:block" aria-hidden>
+      <div className="iso-deck-l relative h-full w-full">
+        {/* Back 3D page layer */}
+        <div
+          className="absolute right-2 top-3 h-16 w-13 rounded-xl border border-rose-300/70 bg-rose-100/90 shadow-md dark:border-rose-500/40 dark:bg-rose-500/20"
+          style={{ transform: 'translateZ(-4px) rotateZ(7deg)' }}
+        />
+        {/* Middle 3D sheet */}
+        <div
+          className="absolute right-5 top-2 h-16 w-13 rounded-xl border border-rose-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-[#131d33]"
+          style={{ transform: 'translateZ(10px) rotateZ(-2deg)' }}
+        >
+          <div className="h-1.5 w-6 rounded-full bg-rose-500" />
+          <div className="mt-1.5 h-1 w-8 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="mt-1 h-1 w-7 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="mt-1 h-1 w-5 rounded-full bg-slate-200 dark:bg-slate-700" />
+        </div>
+        {/* Floating 3D compression badge */}
+        <span
+          className="icon-3d absolute bottom-0 right-0 rounded-full bg-gradient-to-br from-rose-500 to-red-600 px-2.5 py-0.5 text-[10px] font-extrabold text-white"
+          style={{ transform: 'translateZ(24px)' }}
+        >
+          −78%
+        </span>
       </div>
-      {/* Compression pill */}
-      <span className="absolute bottom-0 right-0 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-extrabold text-white shadow-sm transition duration-300 group-hover:scale-105">
-        −78%
-      </span>
     </div>
   )
 }
 
 export function ImageBentoArt() {
   return (
-    <div className="pointer-events-none relative hidden h-20 w-28 shrink-0 sm:block" aria-hidden>
-      {/* Framed colorful mini-photo */}
-      <div className="absolute right-2 top-1 h-16 w-20 overflow-hidden rounded-2xl border border-teal-200/90 bg-gradient-to-br from-teal-400 via-cyan-500 to-blue-600 shadow-sm transition duration-300 group-hover:-rotate-2 group-hover:scale-105 dark:border-teal-500/40">
-        <svg viewBox="0 0 80 64" className="h-full w-full">
-          <circle cx="58" cy="18" r="8" fill="#fef08a" opacity="0.95" />
-          <path d="M0 50 L24 28 L44 44 L58 32 L80 50 L80 64 L0 64 Z" fill="#0f172a" opacity="0.35" />
-          <path d="M0 56 L30 34 L54 52 L80 40 L80 64 L0 64 Z" fill="#0f172a" opacity="0.5" />
-        </svg>
+    <div className="scene-3d pointer-events-none relative hidden h-22 w-30 shrink-0 sm:block" aria-hidden>
+      <div className="iso-deck-r relative h-full w-full">
+        {/* Shadow depth plate */}
+        <div
+          className="absolute right-1 top-2.5 h-16 w-20 rounded-2xl border border-teal-400/30 bg-teal-500/20"
+          style={{ transform: 'translateZ(-6px)' }}
+        />
+        {/* 3D Floating Photo Prism */}
+        <div
+          className="absolute right-2.5 top-1 h-16 w-20 overflow-hidden rounded-2xl border border-white/50 bg-gradient-to-br from-teal-400 via-cyan-500 to-blue-600 shadow-lg"
+          style={{ transform: 'translateZ(10px)' }}
+        >
+          <svg viewBox="0 0 80 64" className="h-full w-full">
+            <circle cx="58" cy="18" r="8" fill="#fef08a" opacity="0.95" />
+            <path d="M0 50 L24 28 L44 44 L58 32 L80 50 L80 64 L0 64 Z" fill="#0f172a" opacity="0.35" />
+            <path d="M0 56 L30 34 L54 52 L80 40 L80 64 L0 64 Z" fill="#0f172a" opacity="0.5" />
+          </svg>
+        </div>
+        {/* Floating 3D Crop Reticle corner */}
+        <div
+          className="absolute right-4 top-2.5 h-6 w-6 rounded-tl-lg border-l-2 border-t-2 border-white/85"
+          style={{ transform: 'translateZ(20px)' }}
+        />
+        {/* Floating 3D WebP badge */}
+        <span
+          className="icon-3d absolute bottom-0 right-0 rounded-full bg-gradient-to-br from-teal-500 to-emerald-600 px-2.5 py-0.5 text-[10px] font-extrabold text-white"
+          style={{ transform: 'translateZ(26px)' }}
+        >
+          WebP
+        </span>
       </div>
-      {/* WebP badge */}
-      <span className="absolute bottom-0 right-0 rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-extrabold text-white shadow-sm transition duration-300 group-hover:scale-105">
-        WebP
-      </span>
     </div>
   )
 }
 
 export function WordBentoArt() {
   return (
-    <div className="pointer-events-none relative hidden h-14 w-20 shrink-0 sm:block" aria-hidden>
-      <div className="absolute right-1 top-0.5 h-12 w-14 rounded-xl border border-blue-200 bg-white p-2 shadow-xs transition duration-300 group-hover:-translate-y-0.5 group-hover:-rotate-3 dark:border-blue-500/30 dark:bg-[#131d33]">
-        <div className="h-1.5 w-7 rounded-full bg-blue-500/80" />
-        <div className="mt-1.5 h-1 w-10 rounded-full bg-slate-200 dark:bg-slate-700" />
-        <div className="mt-1 h-1 w-8 rounded-full bg-slate-200 dark:bg-slate-700" />
-        <div className="mt-1 h-1 w-9 rounded-full bg-slate-200 dark:bg-slate-700" />
+    <div className="scene-3d pointer-events-none relative hidden h-16 w-22 shrink-0 sm:block" aria-hidden>
+      <div className="iso-deck-l relative h-full w-full">
+        <div
+          className="absolute right-0.5 top-2 h-12 w-14 rounded-xl border border-blue-200/70 bg-blue-100/70 dark:border-blue-500/30 dark:bg-blue-500/15"
+          style={{ transform: 'translateZ(-4px)' }}
+        />
+        <div
+          className="absolute right-2 top-0.5 h-12 w-14 rounded-xl border border-blue-200 bg-white p-2 shadow-md dark:border-blue-500/40 dark:bg-[#131d33]"
+          style={{ transform: 'translateZ(10px)' }}
+        >
+          <div className="h-1.5 w-7 rounded-full bg-blue-500" />
+          <div className="mt-1.5 h-1 w-10 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="mt-1 h-1 w-8 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="mt-1 h-1 w-9 rounded-full bg-slate-200 dark:bg-slate-700" />
+        </div>
+        <span
+          className="icon-3d absolute bottom-0 right-0 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 px-2 py-0.5 text-[9px] font-extrabold text-white"
+          style={{ transform: 'translateZ(22px)' }}
+        >
+          DOCX
+        </span>
       </div>
-      <span className="absolute bottom-0 right-0 rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-extrabold text-white shadow-xs transition group-hover:scale-105">
-        DOCX
-      </span>
     </div>
   )
 }
 
 export function PptBentoArt() {
   return (
-    <div className="pointer-events-none relative hidden h-14 w-20 shrink-0 sm:block" aria-hidden>
-      <div className="absolute right-0.5 top-2 h-10 w-14 rotate-6 rounded-xl border border-orange-200 bg-orange-50 transition duration-300 group-hover:rotate-12 dark:border-orange-500/30 dark:bg-orange-500/15" />
-      <div className="absolute right-2.5 top-0.5 h-10 w-14 rounded-xl border border-orange-200 bg-white p-1.5 shadow-xs transition duration-300 group-hover:-translate-y-0.5 dark:border-slate-700 dark:bg-[#131d33]">
-        <div className="h-1.5 w-6 rounded-full bg-orange-500/80" />
-        <div className="mt-1.5 flex gap-1">
-          <span className="h-4 w-5 rounded bg-orange-100 dark:bg-orange-500/20" />
-          <span className="h-4 flex-1 rounded bg-slate-100 dark:bg-slate-800" />
+    <div className="scene-3d pointer-events-none relative hidden h-16 w-22 shrink-0 sm:block" aria-hidden>
+      <div className="iso-deck-l relative h-full w-full">
+        <div
+          className="absolute right-0 top-2.5 h-10 w-14 rounded-xl border border-orange-300/70 bg-orange-100/90 dark:border-orange-500/30 dark:bg-orange-500/20"
+          style={{ transform: 'translateZ(-4px) rotateZ(7deg)' }}
+        />
+        <div
+          className="absolute right-2.5 top-0.5 h-10 w-14 rounded-xl border border-orange-200 bg-white p-1.5 shadow-md dark:border-slate-700 dark:bg-[#131d33]"
+          style={{ transform: 'translateZ(10px)' }}
+        >
+          <div className="h-1.5 w-6 rounded-full bg-orange-500" />
+          <div className="mt-1.5 flex gap-1">
+            <span className="h-4 w-5 rounded bg-orange-200/80 dark:bg-orange-500/30" />
+            <span className="h-4 flex-1 rounded bg-slate-100 dark:bg-slate-800" />
+          </div>
         </div>
+        <span
+          className="icon-3d absolute bottom-0 right-0 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 px-2 py-0.5 text-[9px] font-extrabold text-white"
+          style={{ transform: 'translateZ(22px)' }}
+        >
+          PPTX
+        </span>
       </div>
-      <span className="absolute bottom-0 right-0 rounded-full bg-orange-500 px-1.5 py-0.5 text-[9px] font-extrabold text-white shadow-xs transition group-hover:scale-105">
-        PPTX
-      </span>
     </div>
   )
 }
 
 export function ExcelBentoArt() {
   return (
-    <div className="pointer-events-none relative hidden h-14 w-20 shrink-0 sm:block" aria-hidden>
-      <div className="absolute right-1 top-0.5 grid h-11 w-14 grid-cols-3 gap-0.5 rounded-xl border border-emerald-200 bg-white p-1.5 shadow-xs transition duration-300 group-hover:-translate-y-0.5 group-hover:rotate-2 dark:border-emerald-500/30 dark:bg-[#131d33]">
-        <span className="col-span-3 h-2 rounded-sm bg-emerald-500/80" />
-        {Array.from({ length: 6 }).map((_, i) => (
-          <span key={i} className="rounded-sm bg-emerald-100 dark:bg-emerald-500/20" />
-        ))}
+    <div className="scene-3d pointer-events-none relative hidden h-16 w-22 shrink-0 sm:block" aria-hidden>
+      <div className="iso-deck-r relative h-full w-full">
+        {/* 3D Base Grid */}
+        <div
+          className="absolute right-1.5 top-1.5 grid h-11 w-14 grid-cols-3 gap-0.5 rounded-xl border border-emerald-200 bg-white p-1.5 shadow-md dark:border-emerald-500/35 dark:bg-[#131d33]"
+          style={{ transform: 'translateZ(4px)' }}
+        >
+          <span className="col-span-3 h-2 rounded-sm bg-emerald-500/85" />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <span key={i} className="rounded-sm bg-emerald-100 dark:bg-emerald-500/20" />
+          ))}
+        </div>
+        {/* Raised 3D Bar Columns popping above sheet */}
+        <div className="absolute right-3 bottom-3 flex items-end gap-1" style={{ transform: 'translateZ(16px)' }}>
+          <span className="h-3 w-2 rounded-t bg-emerald-400 shadow-sm transition-all duration-300 group-hover:h-4" />
+          <span className="h-5 w-2 rounded-t bg-emerald-500 shadow-sm transition-all duration-300 group-hover:h-6" />
+          <span className="h-7 w-2 rounded-t bg-teal-500 shadow-sm transition-all duration-300 group-hover:h-8" />
+        </div>
+        <span
+          className="icon-3d absolute bottom-0 right-0 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 px-2 py-0.5 text-[9px] font-extrabold text-white"
+          style={{ transform: 'translateZ(24px)' }}
+        >
+          XLSX
+        </span>
       </div>
-      <span className="absolute bottom-0 right-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-extrabold text-white shadow-xs transition group-hover:scale-105">
-        XLSX
-      </span>
     </div>
   )
 }
 
 export function OtherBentoArt() {
+  const faceCls =
+    'absolute inset-0 flex items-center justify-center rounded-lg border border-violet-400/60 bg-violet-100/80 font-mono text-[9px] font-extrabold text-violet-700 dark:border-violet-400/50 dark:bg-violet-950/75 dark:text-violet-200'
   return (
-    <div className="pointer-events-none relative hidden h-12 w-20 shrink-0 items-center justify-center sm:flex" aria-hidden>
-      <div className="flex h-11 w-16 items-center justify-center rounded-xl border border-violet-200 bg-violet-50/80 font-mono text-xs font-extrabold text-violet-600 shadow-xs transition duration-300 group-hover:scale-105 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300">
-        {'{ }'}
+    <div className="scene-3d pointer-events-none relative hidden h-14 w-18 shrink-0 items-center justify-center sm:flex" aria-hidden>
+      <div className="preserve-3d animate-cube-mini relative h-9 w-9">
+        <span className={faceCls} style={{ transform: 'translateZ(18px)' }}>{'{ }'}</span>
+        <span className={faceCls} style={{ transform: 'rotateY(180deg) translateZ(18px)' }}>ZIP</span>
+        <span className={faceCls} style={{ transform: 'rotateY(90deg) translateZ(18px)' }}>CSV</span>
+        <span className={faceCls} style={{ transform: 'rotateY(-90deg) translateZ(18px)' }}>XML</span>
+        <span className={faceCls} style={{ transform: 'rotateX(90deg) translateZ(18px)' }} />
+        <span className={faceCls} style={{ transform: 'rotateX(-90deg) translateZ(18px)' }} />
       </div>
-      <span className="absolute bottom-0 right-0 rounded-full bg-violet-600 px-1.5 py-0.5 text-[9px] font-extrabold text-white shadow-xs">
-        ZIP
-      </span>
+    </div>
+  )
+}
+
+/* ── 4B. 3D Floating Glass Document Stack for Homepage Smart Dropzone ────── */
+export function Hero3DFileStack({ dragActive }: { dragActive: boolean }) {
+  const cards = [
+    { label: 'PDF', color: '#E5484D', rest: 'translate3d(-74px, 8px, -24px) rotateZ(-16deg) rotateY(18deg)', pull: 'translate3d(-52px, 2px, -14px) rotateZ(-10deg) rotateY(10deg)' },
+    { label: 'PNG', color: '#0EA5A0', rest: 'translate3d(74px, 8px, -24px) rotateZ(16deg) rotateY(-18deg)', pull: 'translate3d(52px, 2px, -14px) rotateZ(10deg) rotateY(-10deg)' },
+    { label: 'DOCX', color: '#1D6FF2', rest: 'translate3d(-44px, -2px, -10px) rotateZ(-8deg) rotateY(10deg)', pull: 'translate3d(-32px, -4px, -4px) rotateZ(-4deg) rotateY(4deg)' },
+    { label: 'XLSX', color: '#1F9D55', rest: 'translate3d(44px, -2px, -10px) rotateZ(8deg) rotateY(-10deg)', pull: 'translate3d(32px, -4px, -4px) rotateZ(4deg) rotateY(-4deg)' },
+  ]
+
+  return (
+    <div className="scene-3d relative mx-auto flex h-24 w-60 items-center justify-center" aria-hidden>
+      <div
+        className="preserve-3d relative flex h-full w-full items-center justify-center transition-transform duration-500 ease-out"
+        style={{ transform: dragActive ? 'rotateX(8deg) scale(1.05)' : 'rotateX(14deg)' }}
+      >
+        {cards.map((c) => (
+          <div
+            key={c.label}
+            className="absolute z-10 flex h-14 w-11 flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-1.5 shadow-md transition-transform duration-400 ease-out dark:border-slate-700 dark:bg-[#131d33]"
+            style={{ transform: dragActive ? c.pull : c.rest }}
+          >
+            <span className="h-1.5 w-6 rounded-full" style={{ backgroundColor: c.color }} />
+            <div className="space-y-1">
+              <span className="block h-1 w-full rounded-full bg-slate-200 dark:bg-slate-700" />
+              <span className="block h-1 w-2/3 rounded-full bg-slate-200 dark:bg-slate-700" />
+            </div>
+            <span className="text-[8px] font-extrabold tracking-wide" style={{ color: c.color }}>
+              {c.label}
+            </span>
+          </div>
+        ))}
+
+        {/* Center 3D Levitating Upload Orb — always cleanly in front on Z-axis */}
+        <div
+          className="relative z-30 transition-transform duration-300"
+          style={{ transform: dragActive ? 'translateZ(36px) scale(1.1)' : 'translateZ(26px)' }}
+        >
+          <span className="brand-grad icon-3d animate-bento-float flex h-14 w-14 items-center justify-center rounded-2xl text-white ring-4 ring-white/85 dark:ring-[#0a1020]">
+            <CloudUpload className="h-6.5 w-6.5" />
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── 4C. Interactive 6-Faced 3D Glass Security Vault Cube (GPU-Safe) ─────── */
+export function PrivacyGlassVault3D() {
+  const faceCls =
+    'absolute inset-0 flex flex-col items-center justify-center rounded-2xl border border-teal-300/35 bg-gradient-to-br from-blue-500/25 via-slate-900/65 to-teal-400/25 shadow-[inset_0_1px_1px_rgba(255,255,255,0.28)]'
+
+  return (
+    <div className="scene-3d group/vault relative mx-auto flex h-44 w-44 shrink-0 items-center justify-center select-none" aria-hidden>
+      {/* Ambient core glow */}
+      <span className="pointer-events-none absolute h-32 w-32 rounded-full bg-teal-400/25 blur-2xl transition duration-500 group-hover/vault:scale-125 group-hover/vault:bg-blue-500/35" />
+
+      {/* 3D Orbiting Security Ring */}
+      <div
+        className="animate-orbit-3d pointer-events-none absolute h-38 w-38 rounded-full border border-dashed border-teal-300/40"
+        style={{ boxShadow: '0 0 24px rgba(20, 184, 166, 0.25)' }}
+      />
+
+      {/* 6-Faced 3D Glass Cube */}
+      <div className="preserve-3d animate-cube-3d relative h-24 w-24">
+        <div className={faceCls} style={{ transform: 'translateZ(48px)' }}>
+          <Lock className="h-7 w-7 text-teal-300 drop-shadow" />
+          <span className="mt-1 text-[9px] font-extrabold uppercase tracking-widest text-white/85">Local</span>
+        </div>
+        <div className={faceCls} style={{ transform: 'rotateY(180deg) translateZ(48px)' }}>
+          <ShieldCheck className="h-7 w-7 text-blue-300 drop-shadow" />
+          <span className="mt-1 text-[9px] font-extrabold uppercase tracking-widest text-white/85">AES-256</span>
+        </div>
+        <div className={faceCls} style={{ transform: 'rotateY(90deg) translateZ(48px)' }}>
+          <span className="font-display text-sm font-extrabold text-teal-300">0 MB</span>
+          <span className="text-[9px] font-bold text-white/80">Cloud</span>
+        </div>
+        <div className={faceCls} style={{ transform: 'rotateY(-90deg) translateZ(48px)' }}>
+          <span className="font-display text-sm font-extrabold text-blue-300">WASM</span>
+          <span className="text-[9px] font-bold text-white/80">On-Device</span>
+        </div>
+        <div className={faceCls} style={{ transform: 'rotateX(90deg) translateZ(48px)' }} />
+        <div className={faceCls} style={{ transform: 'rotateX(-90deg) translateZ(48px)' }} />
+      </div>
     </div>
   )
 }
@@ -330,7 +537,7 @@ export function LivePlayground() {
   return (
     <section className="mx-auto max-w-7xl px-4 pt-14 sm:px-6" aria-labelledby="playground-heading">
       <Reveal>
-        <SpotlightCard className="bento-card p-6 sm:p-8" glowColor="rgba(37, 99, 235, 0.12)">
+        <SpotlightCard tilt={false} className="bento-card p-6 sm:p-8" glowColor="rgba(37, 99, 235, 0.12)">
           <div className="grid gap-8 lg:grid-cols-[.88fr_1.12fr] lg:items-center">
             {/* Left narrative & mode switcher */}
             <div>

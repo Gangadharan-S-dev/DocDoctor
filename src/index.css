@@ -92,8 +92,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-accent);
 }
 
 @keyframes page-enter {
-  0% { opacity: 0; transform: translateY(8px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 @keyframes shimmer {
@@ -111,13 +111,90 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-accent);
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes cube-spin-3d {
+  0% { transform: rotateX(-22deg) rotateY(0deg); }
+  50% { transform: rotateX(-14deg) rotateY(180deg); }
+  100% { transform: rotateX(-22deg) rotateY(360deg); }
+}
+
+@keyframes cube-spin-mini {
+  0% { transform: rotateX(-24deg) rotateY(0deg); }
+  100% { transform: rotateX(-24deg) rotateY(360deg); }
+}
+
+@keyframes orbit-ring-3d {
+  0% { transform: rotateX(72deg) rotateZ(0deg); }
+  100% { transform: rotateX(72deg) rotateZ(360deg); }
+}
+
 @layer components {
+  .scene-3d {
+    perspective: 900px;
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .iso-deck-l {
+    transform-style: preserve-3d;
+    transform: rotateX(20deg) rotateY(-18deg);
+    transition: transform .42s cubic-bezier(.16, 1, .3, 1);
+  }
+  .group:hover .iso-deck-l {
+    transform: rotateX(12deg) rotateY(-26deg) translateY(-3px);
+  }
+  .iso-deck-r {
+    transform-style: preserve-3d;
+    transform: rotateX(20deg) rotateY(16deg);
+    transition: transform .42s cubic-bezier(.16, 1, .3, 1);
+  }
+  .group:hover .iso-deck-r {
+    transform: rotateX(12deg) rotateY(24deg) translateY(-3px);
+  }
+  .tilt-card {
+    transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--ty, 0px));
+    transition: transform 280ms cubic-bezier(.16, 1, .3, 1), box-shadow 200ms ease, border-color 200ms ease;
+  }
+  .tilt-card[data-tilting="true"] {
+    transition: transform 70ms linear, box-shadow 200ms ease, border-color 200ms ease;
+  }
+  .animate-cube-3d {
+    animation: cube-spin-3d 14s linear infinite;
+  }
+  .animate-cube-mini {
+    animation: cube-spin-mini 10s linear infinite;
+  }
+  .animate-orbit-3d {
+    animation: orbit-ring-3d 12s linear infinite;
+  }
+  .icon-3d {
+    box-shadow:
+      inset 0 1.5px 1px rgba(255, 255, 255, .42),
+      inset 0 -2.5px 3px rgba(0, 0, 0, .24),
+      0 6px 14px -4px rgba(9, 14, 26, .28),
+      0 2px 4px rgba(9, 14, 26, .14);
+    transform: translateZ(0);
+    transition: transform .22s cubic-bezier(.16, 1, .3, 1), box-shadow .22s ease;
+  }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-950 px-5 py-3 text-sm font-bold text-white shadow-card transition duration-200 hover:-translate-y-0.5 hover:bg-ink-800 hover:shadow-lift active:translate-y-0 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-ink-950 dark:hover:bg-slate-200;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .18),
+      inset 0 -2.5px 0 rgba(0, 0, 0, .32),
+      0 6px 16px -6px rgba(9, 14, 26, .35);
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-950 px-5 py-3 text-sm font-bold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-ink-800 hover:shadow-lift active:translate-y-[1.5px] active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-ink-950 dark:hover:bg-slate-200;
   }
   .btn-accent {
     background-image: var(--accent-grad);
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold text-white shadow-card transition duration-200 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-lift active:translate-y-0 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50;
+    box-shadow:
+      inset 0 1.5px 0 rgba(255, 255, 255, .32),
+      inset 0 -3px 0 rgba(0, 0, 0, .22),
+      0 8px 20px -6px var(--accent-glow),
+      0 2px 6px rgba(9, 14, 26, .14);
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold text-white transition duration-200 hover:-translate-y-0.5 hover:brightness-110 active:translate-y-[1.5px] active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-accent:active {
+    box-shadow:
+      inset 0 1px 2px rgba(0, 0, 0, .22),
+      0 2px 6px rgba(9, 14, 26, .14);
   }
   .brand-grad {
     background-image: var(--accent-grad);

@@ -122,7 +122,7 @@ export default function UploadArea({ tool, files, onChange }: {
             : 'border-slate-300/90 bg-slate-50/70 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#0a1020] dark:hover:border-accent/60'
         }`}
       >
-        <span className={`brand-grad mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white shadow-md transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}>
+        <span className={`brand-grad icon-3d mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}>
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
         <p className="font-display text-lg font-extrabold text-ink-950 dark:text-white">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>
