@@ -3,21 +3,25 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 import App from './App'
 import I18nProvider from './components/I18nProvider'
-import '@fontsource/manrope/400.css'
-import '@fontsource/manrope/500.css'
-import '@fontsource/manrope/600.css'
-import '@fontsource/manrope/700.css'
-import '@fontsource/manrope/800.css'
-import '@fontsource/sora/600.css'
-import '@fontsource/sora/700.css'
-import '@fontsource/sora/800.css'
+import '@fontsource/manrope/latin-400.css'
+import '@fontsource/manrope/latin-500.css'
+import '@fontsource/manrope/latin-600.css'
+import '@fontsource/manrope/latin-700.css'
+import '@fontsource/manrope/latin-800.css'
+import '@fontsource/sora/latin-600.css'
+import '@fontsource/sora/latin-700.css'
+import '@fontsource/sora/latin-800.css'
 import './index.css'
 
-// Apply the saved theme before first paint to avoid a flash.
+// Apply saved theme and studio accent before first paint to avoid a flash.
 try {
   const saved = localStorage.getItem('docdoctor:theme')
   if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
     document.documentElement.classList.add('dark')
+  }
+  const savedAccent = localStorage.getItem('docdoctor:accent')
+  if (savedAccent === 'cobalt' || savedAccent === 'coral' || savedAccent === 'emerald' || savedAccent === 'violet') {
+    document.documentElement.dataset.accent = savedAccent
   }
 } catch { /* private mode */ }
 

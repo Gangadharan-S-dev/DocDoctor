@@ -435,18 +435,14 @@ export default function VisualCrop({
   return (
     <div className="space-y-4">
       {/* Mode Switcher: Rectangle Crop vs Perspective Crop */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
-        <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Crop mode">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-800 dark:bg-[#0b1120]">
+        <div className="segmented-track" role="tablist" aria-label="Crop mode">
           <button
             type="button"
             role="tab"
             aria-selected={cropMode === 'rect'}
             onClick={() => setCropMode('rect')}
-            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition ${
-              cropMode === 'rect'
-                ? 'bg-accent text-white shadow-sm'
-                : 'text-slate-600 hover:bg-white hover:text-ink-950'
-            }`}
+            className={`segmented-pill ${cropMode === 'rect' ? 'segmented-pill-active' : 'segmented-pill-idle'}`}
           >
             <CropIcon className="h-3.5 w-3.5" /> Rectangle Crop
           </button>
@@ -455,11 +451,7 @@ export default function VisualCrop({
             role="tab"
             aria-selected={cropMode === 'perspective'}
             onClick={() => setCropMode('perspective')}
-            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition ${
-              cropMode === 'perspective'
-                ? 'bg-accent text-white shadow-sm'
-                : 'text-slate-600 hover:bg-white hover:text-ink-950'
-            }`}
+            className={`segmented-pill ${cropMode === 'perspective' ? 'segmented-pill-active' : 'segmented-pill-idle'}`}
           >
             <Scan className="h-3.5 w-3.5" /> Perspective Crop (4-Point Warp)
           </button>
@@ -584,7 +576,7 @@ export default function VisualCrop({
       </div>
 
       {!circular && onCornerRadiusChange && (
-        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs">
           <span className="font-bold text-ink-950 shrink-0">Rounded Corners:</span>
           <input
             type="range"
@@ -592,9 +584,10 @@ export default function VisualCrop({
             max={50}
             value={cornerRadius}
             onChange={(e) => onCornerRadiusChange(+e.target.value)}
-            className="w-40 accent-[#1D6FF2]"
+            className="studio-range w-40"
+            style={{ '--range-pct': `${(cornerRadius / 50) * 100}%` } as React.CSSProperties}
           />
-          <span className="font-bold text-accent">{cornerRadius}%</span>
+          <span className="rounded-lg px-2 py-0.5 font-extrabold tabular-nums" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--color-accent)' }}>{cornerRadius}%</span>
           {cornerRadius > 0 && <span className="text-slate-500">(Exports lossless transparent PNG)</span>}
         </div>
       )}
@@ -686,8 +679,8 @@ export default function VisualCrop({
                   {/* Draggable interior polygon */}
                   <polygon
                     points={`${quad.tl.x},${quad.tl.y} ${quad.tr.x},${quad.tr.y} ${quad.br.x},${quad.br.y} ${quad.bl.x},${quad.bl.y}`}
-                    fill="rgba(29, 111, 242, 0.08)"
-                    stroke="#1D6FF2"
+                    fill="var(--accent-glow)"
+                    stroke="var(--color-accent)"
                     strokeWidth="0.65"
                     vectorEffect="non-scaling-stroke"
                     className="cursor-move"

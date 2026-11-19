@@ -118,11 +118,11 @@ export default function UploadArea({ tool, files, onChange }: {
         onDrop={(e) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files) }}
         className={`group cursor-pointer rounded-3xl border-2 border-dashed px-6 py-10 text-center transition duration-200 sm:py-14 ${
           drag
-            ? 'scale-[1.01] border-blue-500 bg-blue-50/90 shadow-inner dark:bg-blue-500/15'
-            : 'border-slate-300/90 bg-slate-50/70 hover:border-blue-400 hover:bg-blue-50/40 dark:border-slate-700/90 dark:bg-[#0a1020] dark:hover:border-blue-500/60 dark:hover:bg-blue-500/10'
+            ? 'scale-[1.015] border-accent bg-accent-soft/80 shadow-inner ring-4 ring-accent/15'
+            : 'border-slate-300/90 bg-slate-50/70 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#0a1020] dark:hover:border-accent/60'
         }`}
       >
-        <span className="mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 text-white shadow-md shadow-blue-600/25 transition duration-200 group-hover:scale-105">
+        <span className={`brand-grad mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white shadow-md transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}>
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
         <p className="font-display text-lg font-extrabold text-ink-950 dark:text-white">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>

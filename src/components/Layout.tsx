@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink } from 'react-router'
+import { Link, NavLink, useLocation } from 'react-router'
 import { Stethoscope, Menu, X, Search, ShieldCheck, ChevronDown, Moon, Sun, Sparkles } from 'lucide-react'
 import { CATEGORIES, TOOLS } from '../data/tools'
 import { LANGS, useI18n, type Lang } from '../lib/i18n'
@@ -67,6 +67,7 @@ function useTheme(): [boolean, () => void] {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [dark, toggleTheme] = useTheme()
@@ -240,17 +241,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <QuickDock onOpenSearch={() => setPaletteOpen(true)} />
       <Toaster />
 
-      <main id="main" className="flex-1">{children}</main>
+      <main id="main" key={pathname} className="animate-page-enter flex-1">{children}</main>
 
       <footer className="mt-8 border-t border-slate-200/80 bg-[#070b14] pb-20 text-slate-300 dark:border-slate-800/90">
-        <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-blue-500 via-50% to-teal-400" />
+        <div className="brand-grad h-1 w-full" />
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:grid-cols-2 sm:px-6 lg:grid-cols-5">
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-white">
+              <span className="brand-grad flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm">
                 <Stethoscope className="h-4.5 w-4.5" />
               </span>
-              <p className="font-display text-xl font-extrabold text-white">Doc<span className="text-blue-400">Doctor</span></p>
+              <p className="font-display text-xl font-extrabold text-white">Doc<span className="brand-text-grad">Doctor</span></p>
             </div>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
               Every file. Every tool. One vibrant browser studio. Free file tools with local WASM processing and automatic deletion.
@@ -260,7 +261,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               onClick={() => setPaletteOpen(true)}
               className="mt-5 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10"
             >
-              <Sparkles className="h-3.5 w-3.5 text-blue-400" /> Quick-launch any tool (Ctrl+K)
+              <Sparkles className="h-3.5 w-3.5 text-accent" /> Quick-launch any tool (Ctrl+K)
             </button>
           </div>
           {CATEGORIES.slice(0, 3).map((c) => (

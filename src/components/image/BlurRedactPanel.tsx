@@ -314,7 +314,7 @@ export default function BlurRedactPanel({
             max={100}
             value={value.intensity}
             onChange={(e) => update({ intensity: +e.target.value })}
-            className="mt-2 w-full accent-[#1D6FF2]"
+            className="mt-2 w-full accent-accent"
           />
         </label>
 

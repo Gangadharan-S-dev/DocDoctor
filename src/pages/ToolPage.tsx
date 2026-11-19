@@ -3,11 +3,20 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import {
   ShieldCheck, FileCheck2, Clock3, Info, Loader2, Download, FolderDown,
   RotateCcw, AlertTriangle, Star, XCircle, Copy, Check, Eye, X, SplitSquareVertical,
-  RotateCw, FlipHorizontal, FlipVertical, Camera, MapPin, Plus, Trash2, ArrowRight, Lock
+  RotateCw, FlipHorizontal, FlipVertical, Camera, MapPin, Plus, Trash2, ArrowRight, Lock,
+  History, ZoomIn, Workflow
 } from 'lucide-react'
 import { TOOLS, categoryById, formatSize, isImplemented, isServerTool, serverEndpointFor, toolById, type Tool } from '../data/tools'
 import UploadArea, { type PickedFile } from '../components/UploadArea'
 import ToolCard from '../components/ToolCard'
+import { ImageLightbox, SavingsGauge, StudioSkeleton, StudioSlider, WorkspaceStepper } from '../components/StudioControls'
+import {
+  clearSessionHistory,
+  getSessionHistory,
+  onSessionHistoryChange,
+  pushSessionHistory,
+  type SessionHistoryItem,
+} from '../lib/sessionHistory'
 import type { OutputFile } from '../processing/download'
 import { downloadBlob, downloadZip, extOf, stem } from '../processing/download'
 import { MAX_CANVAS_PIXELS, clampDims, formatOutputName } from '../processing/imageCore'
@@ -47,7 +56,7 @@ const ImageExtraPanel = lazy(() => import('../components/image/ImageExtraPanel')
 const IMAGE_EXTRA_ID_SET = new Set<string>(IMAGE_EXTRA_TOOLS.map((t) => t.id))
 const isImageExtraTool = (id: string): id is ImageExtraToolId => IMAGE_EXTRA_ID_SET.has(id)
 
-const PickerFallback = () => <p className="flex items-center gap-2 py-6 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
+const PickerFallback = () => <StudioSkeleton />
 
 const GRID_TOOLS: Record<string, 'select' | 'organize'> = {
   'remove-pdf-pages': 'select', 'extract-pdf-pages': 'select', 'organize-pdf': 'organize',
@@ -78,7 +87,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   const navigate = useNavigate()
   const related = useMemo(() => TOOLS.filter((t) => t.category === tool.category && t.id !== tool.id).slice(0, 4), [tool])
   const [files, setFiles] = useState<PickedFile[]>(() => {
-    const state = location.state as { chainedFiles?: File[] } | null
+    const state = location.state as { chainedFiles?: File[]; pipelineHistory?: string[] } | null
     if (state?.chainedFiles?.length) {
       return state.chainedFiles.map((file, i) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${i}`,
@@ -87,6 +96,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
     }
     return []
   })
+  const [pipelineHistory, setPipelineHistory] = useState<string[]>(() => {
+    const state = location.state as { pipelineHistory?: string[] } | null
+    return Array.isArray(state?.pipelineHistory) ? state.pipelineHistory : []
+  })
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryItem[]>(() => getSessionHistory())
+  useEffect(() => onSessionHistoryChange(() => setSessionHistory(getSessionHistory())), [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [results, setResults] = useState<OutputFile[]>([])
@@ -352,6 +368,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   // Changing the file set invalidates results and per-file derived state.
   const handleFilesChange = (next: PickedFile[]) => {
     setFiles(next)
+    if (!next.length) setPipelineHistory([])
+    setLightboxIdx(null)
     setResults([]); setError(''); setMeta(null); setDims(null); setFileMeta(null); setPreviewText('')
     setCustomNames({}); setPdfPreviewUrl(null); setCopiedIdx(null); setWmLogoUrl(null); setPdfWmLogoUrl(null)
     setJsonValidation(null); setCsvPreviewRows([]); setCsvKeepCols([]); setCsvRenameCols({})
@@ -787,6 +805,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       })
       if (!out.length || out.some((o) => o.blob.size === 0)) throw new Error('Processing produced an empty file. Please try different settings.')
       setResults(out)
+      out.slice(0, 3).forEach((o) => {
+        pushSessionHistory({
+          toolId: tool.id,
+          toolName: tool.name,
+          fileName: o.name,
+          blob: o.blob,
+          size: o.blob.size,
+        })
+      })
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') setError('Processing cancelled.')
       else setError(e instanceof Error ? e.message : 'Processing failed. The file may be damaged, encrypted, or in an unsupported variant.')
@@ -924,10 +951,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   }
 
   const slider = (label: string, v: number, set: (n: number) => void, min: number, max: number, suffix = '') => (
-    <label className="block">
-      <span className="mb-1.5 flex justify-between text-sm font-bold text-ink-950">{label}<span className="text-accent">{v}{suffix}</span></span>
-      <input type="range" min={min} max={max} value={v} onChange={(e) => set(+e.target.value)} className="w-full accent-[#1D6FF2]" />
-    </label>
+    <StudioSlider label={label} value={v} onChange={set} min={min} max={max} suffix={suffix} />
   )
   const sel = (label: string, v: string, set: (s: never) => void, opts: [string, string][]) => (
     <label className="block">
@@ -999,6 +1023,26 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       {/* Split-Pane Studio Layout */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
       <section className="bento-card p-5 sm:p-7" aria-label={`${tool.name} workspace`}>
+        {pipelineHistory.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-1.5 rounded-2xl border border-accent/25 bg-accent-soft/60 px-3.5 py-2 text-xs font-bold text-ink-950 dark:text-slate-100">
+            <Workflow className="h-3.5 w-3.5 shrink-0 text-accent" />
+            <span className="text-[11px] font-extrabold uppercase tracking-wide text-accent">Pipeline:</span>
+            {pipelineHistory.map((stepName, idx) => (
+              <span key={`${stepName}-${idx}`} className="inline-flex items-center gap-1.5">
+                <span className="rounded-lg bg-white/90 px-2 py-0.5 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200/80 dark:bg-[#111a2e] dark:text-slate-300">
+                  {stepName}
+                </span>
+                <ArrowRight className="h-3 w-3 text-slate-400" />
+              </span>
+            ))}
+            <span className="brand-grad rounded-lg px-2 py-0.5 text-[11px] font-extrabold text-white shadow-2xs">
+              {tool.name}
+            </span>
+          </div>
+        )}
+
+        <WorkspaceStepper step={results.length > 0 ? 3 : files.length > 0 ? 2 : 1} />
+
         <UploadArea tool={tool} files={files} onChange={handleFilesChange} />
 
         {tool.id === 'image-metadata' && meta && (
@@ -1430,15 +1474,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
 
                 <div className="flex flex-wrap items-center gap-5 pt-1 text-xs font-bold text-slate-700">
                   <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    <input type="checkbox" checked={wordMatchCase} onChange={(e) => setWordMatchCase(e.target.checked)} className="h-4 w-4 accent-accent" />
                     Case-sensitive
                   </label>
                   <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={wordWholeWord} onChange={(e) => setWordWholeWord(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    <input type="checkbox" checked={wordWholeWord} onChange={(e) => setWordWholeWord(e.target.checked)} className="h-4 w-4 accent-accent" />
                     Whole words only
                   </label>
                   <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={wordUseRegex} onChange={(e) => setWordUseRegex(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    <input type="checkbox" checked={wordUseRegex} onChange={(e) => setWordUseRegex(e.target.checked)} className="h-4 w-4 accent-accent" />
                     Regular expression (Regex)
                   </label>
                 </div>
@@ -1835,7 +1879,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 <div className="grid gap-4 sm:grid-cols-3">
                   <label className="block"><span className="mb-1.5 block text-sm font-bold">Width (px)</span><input type="number" min={1} value={width || ''} onChange={(e) => onWidth(+e.target.value)} className="input" /></label>
                   <label className="block"><span className="mb-1.5 block text-sm font-bold">Height (px)</span><input type="number" min={1} value={height || ''} onChange={(e) => onHeight(+e.target.value)} className="input" /></label>
-                  <label className="flex items-end gap-2 pb-3 text-sm font-bold"><input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" /> Keep aspect ratio</label>
+                  <label className="flex items-end gap-2 pb-3 text-sm font-bold"><input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 accent-accent" /> Keep aspect ratio</label>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-3">
                   {sel('Fitting Policy', resizeMode, setResizeMode as never, [
@@ -2065,7 +2109,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={mergeAddBookmarks}
                         onChange={(e) => setMergeAddBookmarks(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Generate PDF Outline / Bookmarks from filenames
                     </label>
@@ -2399,7 +2443,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                                 setIcoSizes([...icoSizes, item.size].sort((a, b) => a - b))
                               }
                             }}
-                            className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                            className="h-3.5 w-3.5 accent-accent"
                           />
                           {item.label}
                         </label>
@@ -2419,7 +2463,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={icoExportWebKit}
                       onChange={(e) => setIcoExportWebKit(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     <span>Export Full Web Favicon &amp; PWA Kit (.zip with <code className="rounded bg-slate-100 px-1">favicon.ico</code>, <code className="rounded bg-slate-100 px-1">apple-touch-icon.png</code>, <code className="rounded bg-slate-100 px-1">icon-192/512.png</code>, <code className="rounded bg-slate-100 px-1">site.webmanifest</code> &amp; HTML snippet)</span>
                   </label>
@@ -2485,7 +2529,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={imgPdfCaptions}
                       onChange={(e) => setImgPdfCaptions(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Print filename captions underneath each image
                   </label>
@@ -2690,7 +2734,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     />
                   </label>
                   <label className="flex items-center gap-2 pt-6 text-sm font-bold">
-                    <input type="checkbox" checked={pdfNumSkipCover} onChange={(e) => setPdfNumSkipCover(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    <input type="checkbox" checked={pdfNumSkipCover} onChange={(e) => setPdfNumSkipCover(e.target.checked)} className="h-4 w-4 accent-accent" />
                     Skip Cover Page (No number on page 1)
                   </label>
                 </div>
@@ -2721,7 +2765,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={pdfToImgGrayscale}
                       onChange={(e) => setPdfToImgGrayscale(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Convert output images to B&amp;W Grayscale
                   </label>
@@ -2730,7 +2774,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={pdfToImgStitch}
                       onChange={(e) => setPdfToImgStitch(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Stitch all pages vertically into a single continuous scroll image
                   </label>
@@ -2753,7 +2797,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={txtStyledHtml}
                           onChange={(e) => setTxtStyledHtml(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         Include responsive typography &amp; print-ready CSS stylesheet
                       </label>
@@ -2766,7 +2810,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={htmlPreserveHeadings}
                         onChange={(e) => setHtmlPreserveHeadings(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Format headings &amp; list items with clean Markdown markers (#, •)
                     </label>
@@ -2775,7 +2819,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={htmlPreserveLinks}
                         onChange={(e) => setHtmlPreserveLinks(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Preserve hyperlink URLs inline — e.g. Label (https://...)
                     </label>
@@ -2836,7 +2880,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={xmlExportJson}
                         onChange={(e) => setXmlExportJson(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Convert XML structure to JSON (.json) instead of XML
                     </label>
@@ -2871,7 +2915,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={jsonSortKeys}
                           onChange={(e) => setJsonSortKeys(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         Sort JSON keys alphabetically (A → Z)
                       </label>
@@ -2880,7 +2924,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={jsonExportCsv}
                           onChange={(e) => setJsonExportCsv(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         Convert JSON array/object to CSV spreadsheet (.csv)
                       </label>
@@ -2979,7 +3023,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={csvTrimAll}
                       onChange={(e) => setCsvTrimAll(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Also trim whitespace in all cells
                   </label>
@@ -2988,7 +3032,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={csvDedupeAll}
                       onChange={(e) => setCsvDedupeAll(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Also remove duplicate rows
                   </label>
@@ -3029,7 +3073,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                                           setCsvKeepCols([...csvKeepCols, ci].sort((a, b) => a - b))
                                         }
                                       }}
-                                      className="h-3.5 w-3.5 shrink-0 accent-[#1D6FF2]"
+                                      className="h-3.5 w-3.5 shrink-0 accent-accent"
                                       title="Include/exclude column"
                                     />
                                     <input
@@ -3098,7 +3142,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     type="checkbox"
                     checked={zipGroupByType}
                     onChange={(e) => setZipGroupByType(e.target.checked)}
-                    className="h-4 w-4 accent-[#1D6FF2]"
+                    className="h-4 w-4 accent-accent"
                   />
                   <span>Auto-organize files into subfolders by category (<code className="rounded bg-slate-100 px-1">pdf/</code>, <code className="rounded bg-slate-100 px-1">images/</code>, <code className="rounded bg-slate-100 px-1">documents/</code>, <code className="rounded bg-slate-100 px-1">spreadsheets/</code>, <code className="rounded bg-slate-100 px-1">data/</code>)</span>
                 </label>
@@ -3154,7 +3198,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                                     setZipFilterNames([...zipFilterNames, entry.name])
                                   }
                                 }}
-                                className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                                className="h-3.5 w-3.5 accent-accent"
                               />
                               <span className="font-semibold text-ink-950 truncate">{entry.name}</span>
                             </span>
@@ -3213,7 +3257,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={mergeWordIncludeToc}
                         onChange={(e) => setMergeWordIncludeToc(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Generate automatic Table of Contents (TOC) cover page
                     </label>
@@ -3222,7 +3266,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={mergeWordImportStyles}
                         onChange={(e) => setMergeWordImportStyles(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Import missing paragraph &amp; heading styles from secondary files
                     </label>
@@ -3252,7 +3296,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={wordHtmlIncludeToc}
                       onChange={(e) => setWordHtmlIncludeToc(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Auto-generate clickable Table of Contents navigation box from document headings (H1–H3)
                   </label>
@@ -3332,7 +3376,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={wordTxtMarkdown}
                         onChange={(e) => setWordTxtMarkdown(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Preserve Markdown headings (#), **bold**, *italic*, bullets (-), and pipe tables (| a | b |)
                     </label>
@@ -3341,7 +3385,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={wordTxtCollapseBlank}
                         onChange={(e) => setWordTxtCollapseBlank(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Collapse consecutive empty lines
                     </label>
@@ -3420,7 +3464,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     type="checkbox"
                     checked={pptxIncludeNotes}
                     onChange={(e) => setPptxIncludeNotes(e.target.checked)}
-                    className="h-4 w-4 accent-[#1D6FF2]"
+                    className="h-4 w-4 accent-accent"
                   />
                   Include speaker notes at the bottom of each PDF slide (when present)
                 </label>
@@ -3450,7 +3494,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   type="checkbox"
                   checked={csvMergeSingleWorkbook}
                   onChange={(e) => setCsvMergeSingleWorkbook(e.target.checked)}
-                  className="h-4 w-4 accent-[#1D6FF2]"
+                  className="h-4 w-4 accent-accent"
                 />
                 Combine all {files.length} CSV files into a single multi-sheet XLSX workbook (auto-fitted columns)
               </label>
@@ -3469,7 +3513,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     type="checkbox"
                     checked={excelCsvBom}
                     onChange={(e) => setExcelCsvBom(e.target.checked)}
-                    className="h-4 w-4 accent-[#1D6FF2]"
+                    className="h-4 w-4 accent-accent"
                   />
                   Include UTF-8 BOM (Ensures Excel opens international characters &amp; symbols properly)
                 </label>
@@ -3484,7 +3528,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     ['portrait', 'Portrait (Standard vertical page)'],
                   ])}
                   <label className="flex items-center gap-2 pt-6 text-sm font-bold text-ink-950">
-                    <input type="checkbox" checked={excelGridlines} onChange={(e) => setExcelGridlines(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                    <input type="checkbox" checked={excelGridlines} onChange={(e) => setExcelGridlines(e.target.checked)} className="h-4 w-4 accent-accent" />
                     Show cell borders &amp; zebra row shading
                   </label>
                 </div>
@@ -3527,7 +3571,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                               setSheetSel([...sheetSel, sh.name])
                             }
                           }}
-                          className="h-3.5 w-3.5 accent-[#1D6FF2]"
+                          className="h-3.5 w-3.5 accent-accent"
                           title={`Include ${sh.name} in export`}
                         />
                         <button type="button" onClick={() => setActivePreviewSheet(idx)} className="truncate max-w-36">
@@ -3625,7 +3669,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={docxStripXmlBloat}
                         onChange={(e) => setDocxStripXmlBloat(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       <span>Strip <code className="rounded bg-white px-1">w:rsid</code> session IDs &amp; spellcheck proof markers</span>
                     </label>
@@ -3634,7 +3678,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={docxConvertPngToJpeg}
                         onChange={(e) => setDocxConvertPngToJpeg(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       <span>Convert opaque PNG/BMP photos to compact JPEG</span>
                     </label>
@@ -3643,7 +3687,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={docxRemoveOrphans}
                         onChange={(e) => setDocxRemoveOrphans(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       <span>Prune unreferenced orphan media files in <code className="rounded bg-white px-1">word/media</code></span>
                     </label>
@@ -3652,7 +3696,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={docxStripComments}
                         onChange={(e) => setDocxStripComments(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       <span>Accept tracked insertions &amp; strip deleted revisions/comments</span>
                     </label>
@@ -3734,7 +3778,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={pdfDestructiveRedact}
                           onChange={(e) => setPdfDestructiveRedact(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         <span>Destructive Redaction (Flattens redacted pages into images so underlying text cannot be copied or searched)</span>
                       </label>
@@ -3795,7 +3839,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </label>
                   <div className="flex flex-col justify-end gap-2 pb-1">
                     <label className="flex items-center gap-2 text-sm font-bold text-ink-950">
-                      <input type="checkbox" checked={signAllPages} onChange={(e) => setSignAllPages(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      <input type="checkbox" checked={signAllPages} onChange={(e) => setSignAllPages(e.target.checked)} className="h-4 w-4 accent-accent" />
                       Apply signature to all pages in PDF
                     </label>
                     {!signAllPages && sigData && (
@@ -3855,7 +3899,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     type="checkbox"
                     checked={comparePixelDiff}
                     onChange={(e) => setComparePixelDiff(e.target.checked)}
-                    className="h-4 w-4 accent-[#1D6FF2]"
+                    className="h-4 w-4 accent-accent"
                   />
                   <span>Highlight visual pixel differences in red on Document B (detects layout shifts, signatures, &amp; diagram changes alongside text diffs)</span>
                 </label>
@@ -3941,7 +3985,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={pdfToDocxPreserveAlign}
                         onChange={(e) => setPdfToDocxPreserveAlign(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Detect &amp; preserve centered titles and right-aligned text blocks
                     </label>
@@ -3950,7 +3994,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                         type="checkbox"
                         checked={pdfToDocxPageBreaks}
                         onChange={(e) => setPdfToDocxPageBreaks(e.target.checked)}
-                        className="h-4 w-4 accent-[#1D6FF2]"
+                        className="h-4 w-4 accent-accent"
                       />
                       Insert explicit Word page breaks between PDF pages
                     </label>
@@ -3968,7 +4012,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     type="checkbox"
                     checked={pdfExcelMergeSheets}
                     onChange={(e) => setPdfExcelMergeSheets(e.target.checked)}
-                    className="h-4 w-4 accent-[#1D6FF2]"
+                    className="h-4 w-4 accent-accent"
                   />
                   <span>Also generate a combined &quot;All Pages&quot; master worksheet alongside per-page sheets</span>
                 </label>
@@ -4006,7 +4050,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                       type="checkbox"
                       checked={docIncludePageNumbers}
                       onChange={(e) => setDocIncludePageNumbers(e.target.checked)}
-                      className="h-4 w-4 accent-[#1D6FF2]"
+                      className="h-4 w-4 accent-accent"
                     />
                     Stamp footer page numbers (Page X of Y)
                   </label>
@@ -4017,7 +4061,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={docEmbedImages}
                           onChange={(e) => setDocEmbedImages(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         Render embedded DOCX images (<code className="rounded bg-slate-100 px-1">word/media/*</code>)
                       </label>
@@ -4026,7 +4070,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           type="checkbox"
                           checked={docIncludeHeadersFooters}
                           onChange={(e) => setDocIncludeHeadersFooters(e.target.checked)}
-                          className="h-4 w-4 accent-[#1D6FF2]"
+                          className="h-4 w-4 accent-accent"
                         />
                         Include document headers &amp; footers
                       </label>
@@ -4121,19 +4165,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                   </span>
                   <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 text-xs font-bold text-ink-950">
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={pdfAllowPrinting} onChange={(e) => setPdfAllowPrinting(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      <input type="checkbox" checked={pdfAllowPrinting} onChange={(e) => setPdfAllowPrinting(e.target.checked)} className="h-4 w-4 accent-accent" />
                       Allow High-Res Printing
                     </label>
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={pdfAllowCopying} onChange={(e) => setPdfAllowCopying(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      <input type="checkbox" checked={pdfAllowCopying} onChange={(e) => setPdfAllowCopying(e.target.checked)} className="h-4 w-4 accent-accent" />
                       Allow Copying Text
                     </label>
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={pdfAllowModifying} onChange={(e) => setPdfAllowModifying(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      <input type="checkbox" checked={pdfAllowModifying} onChange={(e) => setPdfAllowModifying(e.target.checked)} className="h-4 w-4 accent-accent" />
                       Allow Modifying Pages
                     </label>
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={pdfAllowAnnotating} onChange={(e) => setPdfAllowAnnotating(e.target.checked)} className="h-4 w-4 accent-[#1D6FF2]" />
+                      <input type="checkbox" checked={pdfAllowAnnotating} onChange={(e) => setPdfAllowAnnotating(e.target.checked)} className="h-4 w-4 accent-accent" />
                       Allow Annotations &amp; Forms
                     </label>
                   </div>
@@ -4148,31 +4192,40 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-semibold text-slate-600">Total input: <strong className="text-ink-950">{formatSize(totalIn)}</strong></span>
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500"><FileCheck2 className="h-4 w-4 text-teal2" /> Validated · processed locally</span>
-              </div>
-              <span className="text-[11px] font-semibold text-slate-400 hidden sm:inline-block">Tip: Press <kbd className="rounded bg-slate-100 px-1.5 py-0.5 border text-slate-700">Ctrl+Enter</kbd> to run</span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button type="button" onClick={run} disabled={busy} className="btn-accent w-full sm:w-auto">
-                {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> {t('common.processing')}</> : tool.name}
-              </button>
-              {busy && (
-                <button type="button" onClick={() => abortRef.current?.abort()} className="btn-ghost !py-2.5">
-                  <XCircle className="h-4 w-4" /> {t('common.cancel')}
-                </button>
-              )}
-              {busy && progress && progress.total > 1 && (
-                <span className="flex min-w-44 flex-1 items-center gap-2" role="status">
-                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
-                    <span className="block h-full rounded-full bg-accent transition-all" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+            {/* Sticky Studio Action Bar */}
+            <div className="sticky bottom-4 z-20 -mx-1 rounded-2xl border border-slate-200/90 bg-white/92 px-4 py-3 shadow-lift backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0e1525]/92">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                    {files.length} file{files.length > 1 ? 's' : ''} · <strong className="text-ink-950 dark:text-white">{formatSize(totalIn)}</strong>
                   </span>
-                  <span className="text-xs font-bold text-slate-500">{progress.done}/{progress.total}</span>
-                </span>
-              )}
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                    <FileCheck2 className="h-3.5 w-3.5" /> Local browser processing
+                  </span>
+                  <span className="hidden text-[11px] font-semibold text-slate-400 sm:inline-block">
+                    <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">Ctrl+Enter</kbd>
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                  {busy && progress && progress.total > 1 && (
+                    <span className="flex min-w-36 flex-1 items-center gap-2" role="status">
+                      <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                        <span className="brand-grad block h-full rounded-full transition-all" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+                      </span>
+                      <span className="text-xs font-extrabold tabular-nums text-slate-500">{progress.done}/{progress.total}</span>
+                    </span>
+                  )}
+                  {busy && (
+                    <button type="button" onClick={() => abortRef.current?.abort()} className="btn-ghost !py-2.5 !px-3.5 text-xs">
+                      <XCircle className="h-4 w-4" /> {t('common.cancel')}
+                    </button>
+                  )}
+                  <button type="button" onClick={run} disabled={busy} className="btn-accent !py-2.5 w-full sm:w-auto">
+                    {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> {t('common.processing')}</> : tool.name}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -4270,9 +4323,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 </div>
               </div>
               {savings !== null && savings > 0 && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-sm">
-                  Saved {savings}%
-                </span>
+                <SavingsGauge savingsPct={savings} totalIn={totalIn} totalOut={totalOut} />
               )}
             </div>
 
@@ -4446,7 +4497,19 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                 const isImage = r.blob.type.startsWith('image/')
                 return (
                   <li key={r.name + i} className="flex flex-wrap items-center gap-3 rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200/80 shadow-sm">
-                    {outUrls[i] && <img src={outUrls[i]!} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-slate-200" />}
+                    {outUrls[i] && (
+                      <button
+                        type="button"
+                        onClick={() => setLightboxIdx(i)}
+                        title="Click to inspect fullscreen"
+                        className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-200"
+                      >
+                        <img src={outUrls[i]!} alt="" className="h-full w-full object-cover transition group-hover:scale-105" />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100">
+                          <ZoomIn className="h-4 w-4 text-white" />
+                        </span>
+                      </button>
+                    )}
                     <div className="min-w-0 flex-1">
                       <input
                         type="text"
@@ -4459,6 +4522,16 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                      {isImage && outUrls[i] && (
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIdx(i)}
+                          title="Inspect image fullscreen with zoom"
+                          className="btn-ghost !px-3 !py-2 text-xs"
+                        >
+                          <ZoomIn className="h-4 w-4" /> Inspect
+                        </button>
+                      )}
                       {isImage && (
                         <button
                           type="button"
@@ -4548,7 +4621,12 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
                           const toPass = (nt.multiple ? results : results.slice(0, 1)).map(
                             (r, idx) => new File([r.blob], resolveOutputName(r, idx), { type: r.blob.type })
                           )
-                          navigate(`/tool/${nt.id}`, { state: { chainedFiles: toPass } })
+                          navigate(`/tool/${nt.id}`, {
+                            state: {
+                              chainedFiles: toPass,
+                              pipelineHistory: [...pipelineHistory, tool.name],
+                            },
+                          })
                         }}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 bg-white px-3 py-1.5 text-xs font-bold text-ink-950 shadow-sm hover:border-accent hover:text-accent transition"
                       >
@@ -4589,6 +4667,49 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><kbd className="font-extrabold">Ctrl+K</kbd> Switch tool</span>
           </div>
         </div>
+
+        {sessionHistory.length > 0 && (
+          <div className="bento-card p-5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                <History className="h-3.5 w-3.5 text-accent" /> Session History ({sessionHistory.length})
+              </p>
+              <button
+                type="button"
+                onClick={clearSessionHistory}
+                className="text-[11px] font-bold text-slate-400 transition hover:text-red-500"
+              >
+                Clear
+              </button>
+            </div>
+            <ul className="mt-3 space-y-2">
+              {sessionHistory.slice(0, 5).map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200/70 bg-slate-50/80 px-2.5 py-2 dark:border-slate-800 dark:bg-[#0b1120]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-bold text-ink-950 dark:text-white" title={item.fileName}>
+                      {item.fileName}
+                    </p>
+                    <p className="truncate text-[10px] font-semibold text-slate-400">
+                      {item.toolName} · {formatSize(item.size)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadBlob(item.blob, item.fileName)}
+                    title={`Download ${item.fileName}`}
+                    aria-label={`Download ${item.fileName}`}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-accent hover:text-accent dark:border-slate-700 dark:bg-[#131d33] dark:text-slate-300"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {related.length > 0 && (
           <div className="bento-card p-5">
@@ -4650,8 +4771,22 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
         </div>
       )}
 
+      {/* Zoomable Image Lightbox Inspector */}
+      {lightboxIdx !== null && results[lightboxIdx] && outUrls[lightboxIdx] && (
+        <ImageLightbox
+          imageUrl={outUrls[lightboxIdx]!}
+          originalUrl={files[lightboxIdx]?.file.type.startsWith('image/') ? inUrl : compareInUrl}
+          fileName={resolveOutputName(results[lightboxIdx], lightboxIdx)}
+          sizeBytes={results[lightboxIdx].blob.size}
+          onClose={() => setLightboxIdx(null)}
+          onDownload={() => downloadBlob(results[lightboxIdx].blob, resolveOutputName(results[lightboxIdx], lightboxIdx))}
+          onCopy={() => copyImage(results[lightboxIdx].blob, lightboxIdx)}
+          copied={copiedIdx === lightboxIdx}
+        />
+      )}
+
       {related.length > 0 && (
-        <section className="mt-12" aria-labelledby="related">
+        <section className="mt-12 lg:hidden" aria-labelledby="related">
           <h2 id="related" className="font-display text-xl font-extrabold text-ink-950 dark:text-white">Related tools</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{related.map((t) => <ToolCard key={t.id} tool={t} />)}</div>
         </section>

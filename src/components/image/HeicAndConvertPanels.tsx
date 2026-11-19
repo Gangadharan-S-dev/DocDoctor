@@ -149,7 +149,7 @@ export function HeicConverterPanel({
               max={100}
               value={value.quality}
               onChange={(e) => update({ quality: +e.target.value })}
-              className="mt-3 w-full accent-[#1D6FF2]"
+              className="mt-3 w-full accent-accent"
             />
           </label>
         )}
@@ -299,7 +299,7 @@ export function ImageConverterPanel({
               max={100}
               value={value.quality}
               onChange={(e) => update({ quality: +e.target.value })}
-              className="mt-3 w-full accent-[#1D6FF2]"
+              className="mt-3 w-full accent-accent"
             />
           </label>
         )}

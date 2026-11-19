@@ -987,7 +987,10 @@ export function DocxSplitStudio({
               max={Math.max(5, Math.min(100, blocks?.length ?? 50))}
               value={opts.perDoc ?? 15}
               onChange={(e) => onChange({ ...opts, perDoc: Math.max(1, +e.target.value) })}
-              className="w-full accent-[#1D6FF2]"
+              className="studio-range w-full"
+              style={{
+                '--range-pct': `${(((opts.perDoc ?? 15) - 1) / Math.max(1, Math.max(5, Math.min(100, blocks?.length ?? 50)) - 1)) * 100}%`,
+              } as React.CSSProperties}
             />
           </label>
         </div>
@@ -1038,7 +1041,7 @@ export function DocxSplitStudio({
           type="checkbox"
           checked={opts.nameByHeading !== false}
           onChange={(e) => onChange({ ...opts, nameByHeading: e.target.checked })}
-          className="h-4 w-4 accent-[#1D6FF2]"
+          className="h-4 w-4 accent-accent"
         />
         <span>Auto-name output <code className="rounded bg-slate-100 px-1">.docx</code> files after each part&apos;s first heading / title</span>
       </label>
@@ -1095,7 +1098,7 @@ export function SheetPicker({ file, onChange }: { file: File; onChange: (names: 
       <div className="flex flex-wrap gap-2">
         {names.map((n, i) => (
           <label key={n} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold transition ${sel.has(n) ? 'border-accent bg-accent-soft text-accent-dark ring-2 ring-accent/20' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-            <input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} className="h-4 w-4 accent-[#1D6FF2]" />
+            <input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} className="h-4 w-4 accent-accent" />
             <span className="text-slate-400 font-mono text-[10px]">#{i + 1}</span> {n}
           </label>
         ))}

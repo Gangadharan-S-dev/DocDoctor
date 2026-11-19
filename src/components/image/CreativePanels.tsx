@@ -102,7 +102,7 @@ export function ImageCollagePanel({
                 max={6}
                 value={value.cols}
                 onChange={(e) => update({ cols: +e.target.value })}
-                className="mt-2 w-full accent-[#1D6FF2]"
+                className="mt-2 w-full accent-accent"
               />
             </label>
           )}
@@ -144,7 +144,7 @@ export function ImageCollagePanel({
               max={64}
               value={value.gap}
               onChange={(e) => update({ gap: +e.target.value })}
-              className="mt-1.5 w-full accent-[#1D6FF2]"
+              className="mt-1.5 w-full accent-accent"
             />
           </label>
 
@@ -159,7 +159,7 @@ export function ImageCollagePanel({
               max={80}
               value={value.padding}
               onChange={(e) => update({ padding: +e.target.value })}
-              className="mt-1.5 w-full accent-[#1D6FF2]"
+              className="mt-1.5 w-full accent-accent"
             />
           </label>
 
@@ -174,7 +174,7 @@ export function ImageCollagePanel({
               max={80}
               value={value.cornerRadius}
               onChange={(e) => update({ cornerRadius: +e.target.value })}
-              className="mt-1.5 w-full accent-[#1D6FF2]"
+              className="mt-1.5 w-full accent-accent"
             />
           </label>
 
@@ -324,7 +324,7 @@ export function GifMakerPanel({
               step={20}
               value={value.frameDelayMs}
               onChange={(e) => update({ frameDelayMs: +e.target.value })}
-              className="mt-2 w-full accent-[#1D6FF2]"
+              className="mt-2 w-full accent-accent"
             />
           </label>
 
@@ -406,7 +406,7 @@ export function GifMakerPanel({
                 type="checkbox"
                 checked={value.pingPong}
                 onChange={(e) => update({ pingPong: e.target.checked })}
-                className="h-4 w-4 accent-[#1D6FF2]"
+                className="h-4 w-4 accent-accent"
               />
               <span>Ping-Pong Bounce (Forward + Reverse Loop)</span>
             </label>

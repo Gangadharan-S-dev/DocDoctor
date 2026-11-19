@@ -401,7 +401,7 @@ export default function PassportPhotoPanel({
                 value={value.zoom}
                 onChange={(e) => update({ zoom: +e.target.value })}
                 aria-label="Zoom"
-                className="flex-1 accent-[#1D6FF2]"
+                className="flex-1 accent-accent"
               />
               <ZoomIn className="h-4 w-4 text-slate-400" />
               <span className="w-12 text-right text-xs font-extrabold text-accent">
@@ -417,7 +417,7 @@ export default function PassportPhotoPanel({
                   max={100}
                   value={value.panX}
                   onChange={(e) => update({ panX: +e.target.value })}
-                  className="flex-1 accent-[#1D6FF2]"
+                  className="flex-1 accent-accent"
                 />
               </label>
               <label className="flex items-center gap-2">
@@ -428,7 +428,7 @@ export default function PassportPhotoPanel({
                   max={100}
                   value={value.panY}
                   onChange={(e) => update({ panY: +e.target.value })}
-                  className="flex-1 accent-[#1D6FF2]"
+                  className="flex-1 accent-accent"
                 />
               </label>
             </div>
@@ -504,7 +504,7 @@ export default function PassportPhotoPanel({
                 max={Math.max(1, sheetLayout.maxCapacity)}
                 value={Math.min(value.copies, sheetLayout.maxCapacity)}
                 onChange={(e) => update({ copies: +e.target.value })}
-                className="mt-2 w-full accent-[#1D6FF2]"
+                className="mt-2 w-full accent-accent"
               />
             </label>
           </div>
@@ -541,7 +541,7 @@ export default function PassportPhotoPanel({
             step={0.5}
             value={value.paddingMm}
             onChange={(e) => update({ paddingMm: +e.target.value })}
-            className="mt-2 w-full accent-[#1D6FF2]"
+            className="mt-2 w-full accent-accent"
           />
         </label>
 
@@ -557,7 +557,7 @@ export default function PassportPhotoPanel({
             step={1}
             value={value.borderPx}
             onChange={(e) => update({ borderPx: +e.target.value })}
-            className="mt-2 w-full accent-[#1D6FF2]"
+            className="mt-2 w-full accent-accent"
           />
         </label>
 
@@ -635,7 +635,7 @@ export default function PassportPhotoPanel({
               type="checkbox"
               checked={value.cutMarks}
               onChange={(e) => update({ cutMarks: e.target.checked })}
-              className="h-4 w-4 accent-[#1D6FF2]"
+              className="h-4 w-4 accent-accent"
             />
             <Scissors className="h-3.5 w-3.5 text-accent" />
             Include Hairline Cut Marks & Crop Ticks

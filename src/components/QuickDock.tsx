@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { Home, LayoutGrid, Search, Star, ArrowUp, X, ArrowRight } from 'lucide-react'
 import { categoryById, toolById, type Tool } from '../data/tools'
@@ -9,15 +9,34 @@ export default function QuickDock({ onOpenSearch }: { onOpenSearch: () => void }
   const [favIds, setFavIds] = useState<string[]>(() => getFavorites())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [showTop, setShowTop] = useState(false)
+  const [dockVisible, setDockVisible] = useState(true)
+  const lastYRef = useRef(0)
 
   useEffect(() => onPrefsChange(() => setFavIds(getFavorites())), [])
 
   useEffect(() => {
-    const onScroll = () => setShowTop(window.scrollY > 340)
+    const onScroll = () => {
+      const y = window.scrollY
+      setShowTop(y > 340)
+      if (drawerOpen) {
+        setDockVisible(true)
+        lastYRef.current = y
+        return
+      }
+      const delta = y - lastYRef.current
+      if (y < 140) {
+        setDockVisible(true)
+      } else if (delta > 14) {
+        setDockVisible(false)
+      } else if (delta < -10) {
+        setDockVisible(true)
+      }
+      lastYRef.current = y
+    }
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [drawerOpen])
 
   const favTools = useMemo(
     () => favIds.map((id) => toolById(id)).filter((t): t is Tool => !!t),
@@ -32,7 +51,11 @@ export default function QuickDock({ onOpenSearch }: { onOpenSearch: () => void }
     }`
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-30 flex flex-col items-center px-4 print:hidden">
+    <div
+      className={`pointer-events-none fixed inset-x-0 bottom-4 z-30 flex flex-col items-center px-4 transition duration-300 ease-out print:hidden ${
+        dockVisible ? 'translate-y-0 opacity-100' : 'translate-y-24 opacity-0'
+      }`}
+    >
       {/* Favorites Mini-Drawer above the dock */}
       {drawerOpen && (
         <div className="animate-bento-pop pointer-events-auto mb-2.5 w-full max-w-sm overflow-hidden rounded-3xl border border-slate-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0e1525]/95">
