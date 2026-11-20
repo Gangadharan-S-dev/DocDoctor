@@ -91,7 +91,7 @@ export function WorkspaceStepper({ step }: { step: 1 | 2 | 3 }) {
                 done
                   ? 'bg-teal-600 text-white shadow-xs'
                   : active
-                    ? 'brand-grad text-white shadow-sm'
+                    ? 'brand-grad text-white shadow-sm ring-4 ring-accent/20'
                     : 'bg-slate-200/90 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
               }`}
             >
@@ -123,7 +123,7 @@ export function WorkspaceStepper({ step }: { step: 1 | 2 | 3 }) {
   )
 }
 
-/** Animated radial SVG savings ring + size delta summary. */
+/** Animated radial SVG savings ring + size delta summary with smooth count-up. */
 export function SavingsGauge({
   savingsPct,
   totalIn,
@@ -133,10 +133,29 @@ export function SavingsGauge({
   totalIn: number
   totalOut: number
 }) {
-  const clamped = Math.max(0, Math.min(99, savingsPct))
+  const target = Math.max(0, Math.min(99, savingsPct))
+  const [displayPct, setDisplayPct] = useState(target)
+
+  useEffect(() => {
+    const reduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let raf = 0
+    const start = performance.now()
+    const dur = reduced || target <= 0 ? 0 : 520
+    const tick = (now: number) => {
+      const p = dur === 0 ? 1 : Math.min(1, (now - start) / dur)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setDisplayPct(Math.round(target * eased))
+      if (p < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [target])
+
   const r = 20
   const circ = 2 * Math.PI * r
-  const offset = circ * (1 - clamped / 100)
+  const offset = circ * (1 - displayPct / 100)
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-teal-200/80 bg-white/90 px-3.5 py-2 shadow-2xs dark:border-teal-500/30 dark:bg-[#0b1120]">
       <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
@@ -152,7 +171,7 @@ export function SavingsGauge({
             strokeLinecap="round"
             strokeDasharray={circ}
             strokeDashoffset={offset}
-            className="transition-all duration-700"
+            className="transition-all duration-150"
           />
           <defs>
             <linearGradient id="dd-savings-grad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -162,7 +181,7 @@ export function SavingsGauge({
           </defs>
         </svg>
         <span className="absolute text-[11px] font-extrabold tabular-nums text-teal-700 dark:text-teal-300">
-          -{clamped}%
+          -{displayPct}%
         </span>
       </div>
       <div className="text-xs leading-tight">
@@ -198,7 +217,7 @@ export function ImageLightbox({
   copied?: boolean
 }) {
   const [zoom, setZoom] = useState<'fit' | 1 | 1.5 | 2>('fit')
-  const [checker, setChecker] = useState(true)
+  const [checker, setChecker] = useState(false)
   const [showOrig, setShowOrig] = useState(false)
 
   useEffect(() => {

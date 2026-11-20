@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { ArrowRight, GripVertical, Sparkles, EyeOff, FileArchive, Lock, ShieldCheck, CloudUpload } from 'lucide-react'
+import { ArrowRight, GripVertical, Sparkles, EyeOff, FileArchive, Lock, ShieldCheck, CloudUpload, ScanLine } from 'lucide-react'
+import { BorderBeam } from './FuturisticPrimitives'
 
 /* ── 1. Zero-Re-Render 3D Tilt + Specular Spotlight Bento Card ───────────── */
 export function SpotlightCard({
@@ -396,8 +397,11 @@ export function PrivacyGlassVault3D() {
 
   return (
     <div className="scene-3d group/vault relative mx-auto flex h-44 w-44 shrink-0 items-center justify-center select-none" aria-hidden>
-      {/* Ambient core glow */}
-      <span className="pointer-events-none absolute h-32 w-32 rounded-full bg-teal-400/25 blur-2xl transition duration-500 group-hover/vault:scale-125 group-hover/vault:bg-blue-500/35" />
+      {/* Ambient core glow (zero-blur radial gradient) */}
+      <span
+        className="pointer-events-none absolute h-40 w-40 rounded-full transition-transform duration-500 group-hover/vault:scale-115"
+        style={{ background: 'radial-gradient(circle, rgba(45, 212, 191, 0.28) 0%, rgba(59, 130, 246, 0.14) 45%, transparent 72%)' }}
+      />
 
       {/* 3D Orbiting Security Ring */}
       <div
@@ -431,7 +435,71 @@ export function PrivacyGlassVault3D() {
 }
 
 /* ── 5. Interactive Live Before/After Playground ─────────────────────────── */
-function DemoScene({ mode, side }: { mode: 'compress' | 'redact'; side: 'before' | 'after' }) {
+type DemoMode = 'compress' | 'redact' | 'scan'
+
+function DemoScene({ mode, side }: { mode: DemoMode; side: 'before' | 'after' }) {
+  if (mode === 'scan') {
+    const isClean = side === 'after'
+    return (
+      <div className="relative h-full w-full select-none overflow-hidden bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950">
+        <svg viewBox="0 0 640 340" className="h-full w-full" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id={`desk-shadow-${side}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#0f172a" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="#020617" stopOpacity="0.08" />
+            </linearGradient>
+          </defs>
+          {/* Ambient blueprint grid */}
+          <path d="M0 80 H640 M0 160 H640 M0 240 H640 M160 0 V340 M320 0 V340 M480 0 V340" stroke="#38bdf8" strokeOpacity="0.1" strokeWidth="1" />
+          {isClean ? (
+            <>
+              {/* Clean flattened scanned page */}
+              <rect x="130" y="28" width="380" height="284" rx="14" fill="#ffffff" />
+              <rect x="158" y="54" width="140" height="14" rx="7" fill="#0f172a" />
+              <rect x="438" y="54" width="46" height="14" rx="7" fill="#0d9488" />
+              <rect x="158" y="88" width="324" height="8" rx="4" fill="#334155" />
+              <rect x="158" y="108" width="290" height="8" rx="4" fill="#475569" />
+              <rect x="158" y="128" width="310" height="8" rx="4" fill="#475569" />
+              <rect x="158" y="162" width="324" height="72" rx="10" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1.5" />
+              <rect x="176" y="180" width="120" height="8" rx="4" fill="#0f172a" />
+              <rect x="176" y="200" width="220" height="8" rx="4" fill="#64748b" />
+              <rect x="158" y="256" width="324" height="30" rx="10" fill="#dcfce7" />
+              <text x="320" y="275" textAnchor="middle" fill="#15803d" fontSize="11" fontWeight="800" fontFamily="monospace">
+                HOMOGRAPHY DESKEWED · SAUVOLA ENHANCED · 300 DPI
+              </text>
+            </>
+          ) : (
+            <>
+              {/* Tilted skewed photo with desk shadow & 4-point corner handles */}
+              <polygon points="150,52 510,34 484,296 116,274" fill="#d6d3c9" />
+              <polygon points="150,52 510,34 484,296 116,274" fill={`url(#desk-shadow-${side})`} />
+              <g transform="matrix(0.96, -0.05, -0.09, 0.94, 34, 24)" opacity="0.68">
+                <rect x="158" y="54" width="140" height="14" rx="7" fill="#44403c" />
+                <rect x="158" y="88" width="310" height="8" rx="4" fill="#57534e" />
+                <rect x="158" y="108" width="275" height="8" rx="4" fill="#57534e" />
+                <rect x="158" y="128" width="295" height="8" rx="4" fill="#57534e" />
+                <rect x="158" y="162" width="310" height="72" rx="10" fill="#c7c2b6" />
+              </g>
+              {/* 4-point warp quad outline */}
+              <polygon points="150,52 510,34 484,296 116,274" fill="none" stroke="#38bdf8" strokeWidth="2.5" strokeDasharray="8 6" />
+              {[
+                [150, 52],
+                [510, 34],
+                [484, 296],
+                [116, 274],
+              ].map(([cx, cy]) => (
+                <g key={`${cx}-${cy}`}>
+                  <circle cx={cx} cy={cy} r="9" fill="#0ea5e9" fillOpacity="0.25" />
+                  <circle cx={cx} cy={cy} r="5" fill="#ffffff" stroke="#0284c7" strokeWidth="2.5" />
+                </g>
+              ))}
+            </>
+          )}
+        </svg>
+      </div>
+    )
+  }
+
   if (mode === 'redact') {
     const isRedacted = side === 'after'
     return (
@@ -531,47 +599,82 @@ function DemoScene({ mode, side }: { mode: 'compress' | 'redact'; side: 'before'
 }
 
 export function LivePlayground() {
-  const [mode, setMode] = useState<'compress' | 'redact'>('compress')
+  const [mode, setMode] = useState<DemoMode>('compress')
   const [split, setSplit] = useState(52)
+
+  const meta =
+    mode === 'compress'
+      ? {
+          beforeTitle: '4.2 MB PNG',
+          afterTitle: '180 KB WebP (−96%)',
+          beforeTag: 'Original · 4.2 MB',
+          afterTag: 'WebP · 180 KB',
+          primaryTo: '/tool/compress-image',
+          primaryLabel: 'Try Compress Image',
+          secondaryTo: '/tool/compress-image-kb',
+          secondaryLabel: 'Compress to 50 KB',
+        }
+      : mode === 'redact'
+        ? {
+            beforeTitle: 'PII Exposed',
+            afterTitle: 'Safely Redacted',
+            beforeTag: 'Original Document',
+            afterTag: 'Redacted Copy',
+            primaryTo: '/tool/blur-image',
+            primaryLabel: 'Try Blur & Redact',
+            secondaryTo: '/tool/passport-photo',
+            secondaryLabel: 'Passport Photo Maker',
+          }
+        : {
+            beforeTitle: 'Skewed Photo',
+            afterTitle: 'Flat 300 DPI Scan',
+            beforeTag: 'Camera Capture',
+            afterTag: 'Deskewed Scan',
+            primaryTo: '/tool/crop-image',
+            primaryLabel: 'Try 4-Point Scan Crop',
+            secondaryTo: '/tool/ocr-pdf',
+            secondaryLabel: 'OCR PDF (13 Langs)',
+          }
 
   return (
     <section className="mx-auto max-w-7xl px-4 pt-14 sm:px-6" aria-labelledby="playground-heading">
       <Reveal>
         <SpotlightCard tilt={false} className="bento-card p-6 sm:p-8" glowColor="rgba(37, 99, 235, 0.12)">
+          <BorderBeam durationSec={10} />
           <div className="grid gap-8 lg:grid-cols-[.88fr_1.12fr] lg:items-center">
             {/* Left narrative & mode switcher */}
             <div>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1 text-xs font-extrabold text-accent dark:bg-blue-500/15 dark:text-blue-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1 font-mono text-[11px] font-extrabold uppercase tracking-wider text-accent dark:bg-blue-500/15 dark:text-blue-300">
                 <Sparkles className="h-3.5 w-3.5" /> Interactive live preview
               </span>
-              <h2 id="playground-heading" className="mt-3 font-display text-2xl font-extrabold tracking-tight text-ink-950 dark:text-white sm:text-3xl">
+              <h2 id="playground-heading" className="display-section mt-3 font-display font-extrabold text-ink-950 dark:text-white">
                 See studio-grade WASM results before you upload
               </h2>
               <p className="mt-2.5 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                Drag the divider to compare pixel-sharp on-device compression and permanent privacy redaction — zero watermarks, zero cloud queues.
+                Drag the divider to compare pixel-sharp on-device compression, permanent privacy redaction, and 4-point document deskewing — zero watermarks, zero cloud queues.
               </p>
 
               {/* Mode toggle pills */}
-              <div className="mt-5 inline-flex rounded-2xl border border-slate-200/90 bg-slate-100/80 p-1 dark:border-slate-700/80 dark:bg-[#0a1020]" role="tablist" aria-label="Demo mode">
+              <div className="mt-5 inline-flex flex-wrap gap-1 rounded-2xl border border-slate-200/90 bg-slate-100/80 p-1 dark:border-slate-700/80 dark:bg-[#0a1020]" role="tablist" aria-label="Demo mode">
                 <button
                   type="button"
                   role="tab"
                   aria-selected={mode === 'compress'}
                   onClick={() => setMode('compress')}
-                  className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition ${
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold transition ${
                     mode === 'compress'
                       ? 'bg-white text-ink-950 shadow-xs dark:bg-[#162238] dark:text-white'
                       : 'text-slate-500 hover:text-ink-950 dark:text-slate-400 dark:hover:text-white'
                   }`}
                 >
-                  <FileArchive className="h-3.5 w-3.5 text-teal2" /> Image Compression
+                  <FileArchive className="h-3.5 w-3.5 text-teal2" /> Compress
                 </button>
                 <button
                   type="button"
                   role="tab"
                   aria-selected={mode === 'redact'}
                   onClick={() => setMode('redact')}
-                  className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition ${
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold transition ${
                     mode === 'redact'
                       ? 'bg-white text-ink-950 shadow-xs dark:bg-[#162238] dark:text-white'
                       : 'text-slate-500 hover:text-ink-950 dark:text-slate-400 dark:hover:text-white'
@@ -579,40 +682,44 @@ export function LivePlayground() {
                 >
                   <EyeOff className="h-3.5 w-3.5 text-rose-500" /> Blur &amp; Redact
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'scan'}
+                  onClick={() => setMode('scan')}
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold transition ${
+                    mode === 'scan'
+                      ? 'bg-white text-ink-950 shadow-xs dark:bg-[#162238] dark:text-white'
+                      : 'text-slate-500 hover:text-ink-950 dark:text-slate-400 dark:hover:text-white'
+                  }`}
+                >
+                  <ScanLine className="h-3.5 w-3.5 text-blue-500" /> Perspective Scan
+                </button>
               </div>
 
               {/* Savings metric strip */}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-[#0b1120]">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Before</p>
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Before</p>
                   <p className="mt-0.5 font-display text-lg font-extrabold text-ink-950 dark:text-white">
-                    {mode === 'compress' ? '4.2 MB PNG' : 'PII Exposed'}
+                    {meta.beforeTitle}
                   </p>
                 </div>
                 <div className="rounded-2xl border border-teal-200/80 bg-teal-50/70 p-3.5 dark:border-teal-500/30 dark:bg-teal-500/10">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-300">After</p>
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-teal-700 dark:text-teal-300">After</p>
                   <p className="mt-0.5 font-display text-lg font-extrabold text-teal-800 dark:text-teal-200">
-                    {mode === 'compress' ? '180 KB WebP (−96%)' : 'Safely Redacted'}
+                    {meta.afterTitle}
                   </p>
                 </div>
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
-                <Link
-                  to={mode === 'compress' ? '/tool/compress-image' : '/tool/blur-image'}
-                  className="btn-accent"
-                >
-                  Try {mode === 'compress' ? 'Compress Image' : 'Blur & Redact'} <ArrowRight className="h-4 w-4" />
+                <Link to={meta.primaryTo} className="btn-accent">
+                  {meta.primaryLabel} <ArrowRight className="h-4 w-4" />
                 </Link>
-                {mode === 'compress' ? (
-                  <Link to="/tool/compress-image-kb" className="btn-ghost">
-                    Compress to 50 KB
-                  </Link>
-                ) : (
-                  <Link to="/tool/passport-photo" className="btn-ghost">
-                    Passport Photo Maker
-                  </Link>
-                )}
+                <Link to={meta.secondaryTo} className="btn-ghost">
+                  {meta.secondaryLabel}
+                </Link>
               </div>
             </div>
 
@@ -630,20 +737,25 @@ export function LivePlayground() {
               </div>
 
               {/* Labels */}
-              <span className="pointer-events-none absolute left-3.5 top-3.5 rounded-full bg-slate-950/75 px-3 py-1 text-[11px] font-extrabold text-white backdrop-blur">
-                {mode === 'compress' ? 'Original · 4.2 MB' : 'Original Document'}
+              <span className="pointer-events-none absolute left-3.5 top-3.5 rounded-full bg-slate-950/85 px-3 py-1 text-[11px] font-extrabold text-white">
+                {meta.beforeTag}
               </span>
-              <span className="pointer-events-none absolute right-3.5 top-3.5 rounded-full bg-teal-600/90 px-3 py-1 text-[11px] font-extrabold text-white backdrop-blur">
-                {mode === 'compress' ? 'WebP · 180 KB' : 'Redacted Copy'}
+              <span className="pointer-events-none absolute right-3.5 top-3.5 rounded-full bg-teal-600/95 px-3 py-1 text-[11px] font-extrabold text-white">
+                {meta.afterTag}
               </span>
 
-              {/* Vertical divider & handle */}
+              {/* Precision HUD split telemetry */}
+              <span className="pointer-events-none absolute bottom-3 right-3.5 rounded-full border border-white/15 bg-slate-950/85 px-2.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-slate-200 tabular-nums">
+                SPLIT · {split}%
+              </span>
+
+              {/* Vertical divider & glowing handle */}
               <div
                 aria-hidden
-                className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-white shadow-[0_0_12px_rgba(0,0,0,0.45)]"
+                className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-white shadow-[0_0_16px_rgba(56,189,248,0.65)]"
                 style={{ left: `${split}%` }}
               >
-                <span className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white bg-ink-950 text-white shadow-lg">
+                <span className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white bg-ink-950 text-white shadow-[0_0_20px_rgba(37,99,235,0.5)]">
                   <GripVertical className="h-4 w-4" />
                 </span>
               </div>

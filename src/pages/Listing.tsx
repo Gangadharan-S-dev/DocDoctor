@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router'
 import { Search, ArrowRight, ArrowUpRight, LayoutGrid, List, RotateCcw } from 'lucide-react'
 import { CATEGORIES, TOOLS, categoryById, toolsByCategory, type CategoryId } from '../data/tools'
 import ToolCard from '../components/ToolCard'
+import { BorderBeam } from '../components/FuturisticPrimitives'
 
 type FormatFilter = 'all' | 'pdf' | 'image' | 'docx' | 'xlsx' | 'pptx' | 'data'
 type SortMode = 'default' | 'popular' | 'az'
@@ -59,10 +60,11 @@ export function ToolsPage() {
         <span className="text-ink-950 dark:text-slate-200">All Tools</span>
       </nav>
 
-      <div className="bento-card bento-dots mt-4 p-6 sm:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="bento-card bento-dots glass-grain mt-4 p-6 sm:p-8">
+        <BorderBeam durationSec={10} />
+        <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="font-display text-3xl font-extrabold tracking-tight text-ink-950 dark:text-white sm:text-4xl">
+            <h1 className="display-section font-display font-extrabold text-ink-950 dark:text-white">
               All {TOOLS.length} tools
             </h1>
             <p className="mt-2 max-w-2xl text-slate-600 dark:text-slate-300">
@@ -111,14 +113,17 @@ export function ToolsPage() {
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center">
+      {/* Sticky Frosted Filter Toolbar */}
+      <div className="glass-spatial sticky top-[76px] z-20 mt-4 !rounded-2xl p-3.5 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative w-full max-w-md">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <span className="sr-only">Search tools</span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by tool name or format…" className="input pl-10" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by tool name or format…" className="input !py-2.5 pl-10" />
           </label>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by category">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
             <button
               type="button"
               onClick={() => setCat('all')}
@@ -152,8 +157,8 @@ export function ToolsPage() {
         </div>
 
         {/* Format Quick-Filter Chips */}
-        <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 pt-4 dark:border-slate-800/80" role="group" aria-label="Filter by file format">
-          <span className="mr-1 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Format:</span>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 pt-3 dark:border-slate-800/80" role="group" aria-label="Filter by file format">
+          <span className="mr-1 font-mono text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Format:</span>
           {FORMAT_CHIPS.map((c) => (
             <button
               key={c.id}
@@ -262,10 +267,11 @@ export function CategoryPage() {
       </nav>
 
       <div
-        className="bento-card bento-dots mt-4 p-6 sm:p-8"
+        className="bento-card bento-dots glass-grain mt-4 p-6 sm:p-8"
         style={{ backgroundImage: `radial-gradient(480px circle at 95% 15%, ${cat.color}24, transparent 60%)` }}
       >
-        <div className="flex flex-wrap items-start gap-5">
+        <BorderBeam color={cat.color} durationSec={9} />
+        <div className="relative z-10 flex flex-wrap items-start gap-5">
           <span
             className="icon-3d flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-white"
             style={{ backgroundColor: cat.color }}

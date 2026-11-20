@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { ShieldCheck, Cpu, Lock, Timer, FileCheck2, Sparkles, ArrowRight, Compass, Home as HomeIcon } from 'lucide-react'
 import { TOOLS } from '../data/tools'
 import { SpotlightCard } from '../components/BentoVisuals'
+import { BorderBeam } from '../components/FuturisticPrimitives'
 
 export function AboutPage() {
   return (
@@ -61,9 +62,10 @@ export function PrivacyPage() {
     <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
       <SpotlightCard
         glowColor="rgba(20, 184, 166, 0.22)"
-        className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#090e1a] p-7 text-white shadow-lift sm:p-10"
+        className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#060913] p-7 text-white shadow-lift sm:p-10"
+        style={{ backgroundImage: 'radial-gradient(420px circle at 92% 10%, rgba(20, 184, 166, 0.22), transparent 62%)' }}
       >
-        <span aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-teal-500/20 blur-3xl" />
+        <BorderBeam durationSec={9} />
         <p className="inline-flex items-center gap-2 rounded-full border border-teal-400/30 bg-teal-400/10 px-3.5 py-1 text-xs font-extrabold uppercase tracking-wider text-teal-300">
           <ShieldCheck className="h-3.5 w-3.5" /> Privacy notice
         </p>

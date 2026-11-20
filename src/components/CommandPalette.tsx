@@ -1,20 +1,76 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Search, X, ArrowRight, Star, Clock, Sparkles, CornerDownLeft } from 'lucide-react'
-import { CATEGORIES, TOOLS, categoryById, popularTools, toolById, type CategoryId, type Tool } from '../data/tools'
+import {
+  Search, X, ArrowRight, Star, Clock, Sparkles, CornerDownLeft,
+  Moon, Sun, Palette, Languages, Compass, Download,
+} from 'lucide-react'
+import { CATEGORIES, TOOLS, categoryById, formatSize, popularTools, toolById, type CategoryId, type Tool } from '../data/tools'
 import { getFavorites, getRecent } from '../lib/prefs'
+import { getSessionHistory } from '../lib/sessionHistory'
+import { downloadBlob } from '../processing/download'
+import { BorderBeam } from './FuturisticPrimitives'
+
+export type StudioAccentId = 'cobalt' | 'coral' | 'emerald' | 'violet'
 
 interface CommandPaletteProps {
   open: boolean
   onClose: () => void
+  dark?: boolean
+  onToggleTheme?: () => void
+  accent?: StudioAccentId
+  onSetAccent?: (next: StudioAccentId) => void
+  lang?: 'en' | 'es'
+  onToggleLang?: () => void
 }
 
-export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
-  if (!open) return null
-  return <CommandPaletteDialog onClose={onClose} />
+/** Natural-language intent aliases so users find tools by goal, not just exact title. */
+const TOOL_ALIASES: Record<string, string> = {
+  'compress-pdf': 'shrink smaller reduce size email limit',
+  'compress-image': 'shrink smaller reduce photo size web optimize',
+  'compress-image-kb': '20kb 50kb 100kb exam portal whatsapp target size kb',
+  'merge-pdf': 'combine join stitch multiple pdfs together',
+  'split-pdf': 'cut separate divide pages',
+  'protect-pdf': 'lock password encrypt aes256 secure',
+  'unlock-pdf': 'remove password decrypt open',
+  'sign-pdf': 'signature autograph draw sign document',
+  'ocr-pdf': 'scan extract text searchable copy text',
+  'blur-image': 'censor redact hide face pii pixelate blackout privacy',
+  'crop-image': 'scan deskew perspective warp straighten document trim',
+  'passport-photo': 'visa id photo biometric 300dpi a4 sheet pan ssc',
+  'heic-to-jpg': 'iphone apple photo convert',
+  'gif-maker': 'animated gif frames loop',
+  'zip-files': 'archive bundle compress folder',
+  'extract-zip': 'unzip decompress open archive',
 }
 
-function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
+type PaletteEntry =
+  | { kind: 'tool'; id: string; tool: Tool }
+  | {
+      kind: 'action'
+      id: string
+      title: string
+      subtitle: string
+      badge: string
+      color: string
+      keywords: string
+      icon: typeof Moon
+      run: () => void
+    }
+
+export default function CommandPalette(props: CommandPaletteProps) {
+  if (!props.open) return null
+  return <CommandPaletteDialog {...props} />
+}
+
+function CommandPaletteDialog({
+  onClose,
+  dark,
+  onToggleTheme,
+  accent,
+  onSetAccent,
+  lang,
+  onToggleLang,
+}: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [cat, setCat] = useState<'all' | CategoryId>('all')
   const [activeIdx, setActiveIdx] = useState(0)
@@ -32,28 +88,151 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
     return { favs: favs.slice(0, 4), recents: recents.slice(0, 4) }
   }, [])
 
-  const results = useMemo(() => {
+  const studioActions = useMemo<Extract<PaletteEntry, { kind: 'action' }>[]>(() => {
+    const list: Extract<PaletteEntry, { kind: 'action' }>[] = []
+    if (onToggleTheme) {
+      list.push({
+        kind: 'action',
+        id: 'action-theme',
+        title: dark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
+        subtitle: 'Toggle studio surface theme',
+        badge: 'Theme',
+        color: '#f59e0b',
+        keywords: 'theme dark light mode appearance night day',
+        icon: dark ? Sun : Moon,
+        run: () => {
+          onToggleTheme()
+          onClose()
+        },
+      })
+    }
+    if (onSetAccent) {
+      const accents: { id: StudioAccentId; label: string; color: string }[] = [
+        { id: 'cobalt', label: 'Cobalt Blue', color: '#2563eb' },
+        { id: 'coral', label: 'Coral Flame', color: '#f43f5e' },
+        { id: 'emerald', label: 'Emerald Mint', color: '#059669' },
+        { id: 'violet', label: 'Electric Violet', color: '#7c3aed' },
+      ]
+      for (const a of accents) {
+        if (a.id === accent) continue
+        list.push({
+          kind: 'action',
+          id: `action-accent-${a.id}`,
+          title: `Accent: ${a.label}`,
+          subtitle: 'Personalize buttons, beams, and sliders',
+          badge: 'Accent',
+          color: a.color,
+          keywords: `accent color theme ${a.id} ${a.label.toLowerCase()}`,
+          icon: Palette,
+          run: () => {
+            onSetAccent(a.id)
+            onClose()
+          },
+        })
+      }
+    }
+    if (onToggleLang) {
+      list.push({
+        kind: 'action',
+        id: 'action-lang',
+        title: lang === 'es' ? 'Switch Language to English (EN)' : 'Switch Language to Español (ES)',
+        subtitle: 'Toggle interface language',
+        badge: 'Language',
+        color: '#0d9488',
+        keywords: 'language english spanish espanol locale i18n',
+        icon: Languages,
+        run: () => {
+          onToggleLang()
+          onClose()
+        },
+      })
+    }
+    list.push({
+      kind: 'action',
+      id: 'action-all-tools',
+      title: `Browse All ${TOOLS.length} Tools`,
+      subtitle: 'Open full searchable directory with format filters',
+      badge: 'Navigate',
+      color: '#2563eb',
+      keywords: 'directory catalog all tools browse list',
+      icon: Compass,
+      run: () => {
+        navigate('/tools')
+        onClose()
+      },
+    })
+    for (const item of getSessionHistory().slice(0, 4)) {
+      list.push({
+        kind: 'action',
+        id: `output-${item.id}`,
+        title: `Download ${item.fileName}`,
+        subtitle: `Session output · ${item.toolName} · ${formatSize(item.size)}`,
+        badge: 'Output',
+        color: '#0d9488',
+        keywords: `output download recent file ${item.fileName.toLowerCase()} ${item.toolName.toLowerCase()}`,
+        icon: Download,
+        run: () => {
+          downloadBlob(item.blob, item.fileName)
+          onClose()
+        },
+      })
+    }
+    return list
+  }, [dark, onToggleTheme, accent, onSetAccent, lang, onToggleLang, navigate, onClose])
+
+  const entries = useMemo<PaletteEntry[]>(() => {
     const q = query.trim().toLowerCase()
     const pool = cat === 'all' ? TOOLS : TOOLS.filter((t) => t.category === cat)
+
     if (!q) {
-      if (cat !== 'all') return pool.slice(0, 12)
+      if (cat !== 'all') {
+        return pool.slice(0, 12).map((tool) => ({ kind: 'tool', id: tool.id, tool }))
+      }
       const combined: Tool[] = [...quickTools.favs, ...quickTools.recents]
       for (const p of popularTools) {
         if (!combined.some((c) => c.id === p.id)) combined.push(p)
       }
-      return combined.slice(0, 10)
+      const toolEntries: PaletteEntry[] = combined.slice(0, 8).map((tool) => ({ kind: 'tool', id: tool.id, tool }))
+      const topActions: PaletteEntry[] = studioActions.slice(0, 3)
+      return [...toolEntries, ...topActions]
     }
-    return pool
-      .filter((t) => `${t.name} ${t.description} ${t.acceptLabel} ${t.category}`.toLowerCase().includes(q))
-      .sort((a, b) => {
-        const aName = a.name.toLowerCase().includes(q) ? 0 : 1
-        const bName = b.name.toLowerCase().includes(q) ? 0 : 1
-        return aName - bName
-      })
-      .slice(0, 14)
-  }, [query, cat, quickTools])
 
-  const safeIdx = results.length ? Math.min(activeIdx, results.length - 1) : 0
+    const terms = q.split(/\s+/).filter(Boolean)
+    const matchedTools = pool
+      .map((t) => {
+        const alias = TOOL_ALIASES[t.id] ?? ''
+        const haystack = `${t.name} ${t.description} ${t.acceptLabel} ${t.category} ${alias}`.toLowerCase()
+        if (!terms.every((term) => haystack.includes(term))) return null
+        const nameLow = t.name.toLowerCase()
+        const score = nameLow.startsWith(q) ? 0 : nameLow.includes(q) ? 1 : alias.includes(q) ? 2 : 3
+        return { tool: t, score }
+      })
+      .filter((x): x is { tool: Tool; score: number } => x !== null)
+      .sort((a, b) => a.score - b.score || a.tool.name.localeCompare(b.tool.name))
+      .slice(0, 12)
+      .map((x): PaletteEntry => ({ kind: 'tool', id: x.tool.id, tool: x.tool }))
+
+    const matchedActions: PaletteEntry[] =
+      cat === 'all'
+        ? studioActions.filter((a) => {
+            const hay = `${a.title} ${a.subtitle} ${a.keywords}`.toLowerCase()
+            return terms.every((term) => hay.includes(term))
+          })
+        : []
+
+    return [...matchedTools, ...matchedActions]
+  }, [query, cat, quickTools, studioActions])
+
+  const safeIdx = entries.length ? Math.min(activeIdx, entries.length - 1) : 0
+
+  const executeEntry = (entry: PaletteEntry) => {
+    if (entry.kind === 'tool') {
+      navigate(`/tool/${entry.tool.id}`)
+      onClose()
+    } else {
+      entry.run()
+    }
+  }
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -62,47 +241,49 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         onClose()
       } else if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setActiveIdx((i) => (results.length ? (i + 1) % results.length : 0))
+        setActiveIdx((i) => (entries.length ? (i + 1) % entries.length : 0))
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setActiveIdx((i) => (results.length ? (i - 1 + results.length) % results.length : 0))
-      } else if (e.key === 'Enter' && results[safeIdx]) {
+        setActiveIdx((i) => (entries.length ? (i - 1 + entries.length) % entries.length : 0))
+      } else if (e.key === 'Enter' && entries[safeIdx]) {
         e.preventDefault()
-        navigate(`/tool/${results[safeIdx].id}`)
-        onClose()
+        const picked = entries[safeIdx]
+        if (picked.kind === 'tool') {
+          navigate(`/tool/${picked.tool.id}`)
+          onClose()
+        } else {
+          picked.run()
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [results, safeIdx, navigate, onClose])
-
-  const selectTool = (tool: Tool) => {
-    navigate(`/tool/${tool.id}`)
-    onClose()
-  }
+  }, [entries, safeIdx, navigate, onClose])
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Quick tool launcher"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/55 px-4 pt-[10vh] backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 px-4 pt-[10vh] backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        className="animate-bento-pop w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 shadow-2xl backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0d1424]/95"
+        className="animate-bento-pop glass-grain relative w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 shadow-2xl backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0a1020]/95"
         onClick={(e) => e.stopPropagation()}
       >
+        <BorderBeam durationSec={8} />
+
         {/* Search header */}
-        <div className="flex items-center gap-3 border-b border-slate-200/80 px-5 py-4 dark:border-slate-800">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-white shadow-sm">
+        <div className="relative z-10 flex items-center gap-3 border-b border-slate-200/80 px-5 py-4 dark:border-slate-800">
+          <span className="brand-grad flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm">
             <Search className="h-4 w-4" />
           </span>
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setActiveIdx(0) }}
-            placeholder={`Search all ${TOOLS.length} tools — e.g. "compress pdf", "passport", "blur image"…`}
+            placeholder='Try "shrink pdf", "50kb", "blur face", or "dark mode"…'
             className="w-full bg-transparent text-base font-semibold text-ink-950 placeholder:text-slate-400 focus:outline-none dark:text-white dark:placeholder:text-slate-500"
             autoComplete="off"
           />
@@ -126,7 +307,7 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Vibrant category pills */}
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-5 py-2.5 dark:border-slate-800/80">
+        <div className="relative z-10 flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-5 py-2.5 dark:border-slate-800/80">
           <button
             type="button"
             onClick={() => { setCat('all'); setActiveIdx(0) }}
@@ -159,39 +340,79 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Results list */}
-        <div className="max-h-[54vh] overflow-y-auto p-2.5">
+        <div className="relative z-10 max-h-[54vh] overflow-y-auto p-2.5">
           {!query && cat === 'all' && (
-            <p className="flex items-center gap-1.5 px-3 pb-1.5 pt-1 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+            <p className="flex items-center gap-1.5 px-3 pb-1.5 pt-1 font-mono text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
               {quickTools.favs.length > 0 ? (
-                <><Star className="h-3 w-3 text-amber-500" /> Favorites, recent &amp; popular</>
+                <><Star className="h-3 w-3 text-amber-500" /> Favorites, recent &amp; quick actions</>
               ) : quickTools.recents.length > 0 ? (
-                <><Clock className="h-3 w-3 text-accent" /> Recent &amp; popular tools</>
+                <><Clock className="h-3 w-3 text-accent" /> Recent tools &amp; quick actions</>
               ) : (
-                <><Sparkles className="h-3 w-3 text-accent" /> Popular tools</>
+                <><Sparkles className="h-3 w-3 text-accent" /> Popular tools &amp; studio actions</>
               )}
             </p>
           )}
 
-          {results.length === 0 ? (
+          {entries.length === 0 ? (
             <div className="py-12 text-center">
-              <p className="font-display text-base font-bold text-ink-950 dark:text-white">No tools match “{query}”</p>
-              <p className="mt-1 text-xs text-slate-500">Try a file format like PDF, HEIC, DOCX, or an action like compress, merge, or crop.</p>
+              <p className="font-display text-base font-bold text-ink-950 dark:text-white">No tools or actions match “{query}”</p>
+              <p className="mt-1 text-xs text-slate-500">Try a goal like &ldquo;shrink pdf&rdquo;, &ldquo;50kb&rdquo;, &ldquo;lock&rdquo;, or &ldquo;dark mode&rdquo;.</p>
             </div>
           ) : (
             <ul role="listbox" className="space-y-1">
-              {results.map((tool, idx) => {
+              {entries.map((entry, idx) => {
+                const active = idx === safeIdx
+                if (entry.kind === 'action') {
+                  const Icon = entry.icon
+                  return (
+                    <li key={entry.id} role="option" aria-selected={active}>
+                      <button
+                        type="button"
+                        onMouseEnter={() => setActiveIdx(idx)}
+                        onClick={() => executeEntry(entry)}
+                        className={`flex w-full items-center gap-3.5 rounded-2xl px-3.5 py-2.5 text-left transition ${
+                          active
+                            ? 'bg-slate-100/90 ring-1 ring-accent/25 dark:bg-slate-800/80'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                        }`}
+                      >
+                        <span
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                          style={{ backgroundColor: `${entry.color}18`, color: entry.color }}
+                        >
+                          <Icon className="h-4.5 w-4.5" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-2">
+                            <span className="truncate font-display text-sm font-bold text-ink-950 dark:text-white">{entry.title}</span>
+                            <span className="rounded-full bg-slate-200/70 px-2 py-0.5 font-mono text-[9px] font-extrabold uppercase tracking-wider text-slate-600 dark:bg-slate-700/80 dark:text-slate-300">
+                              {entry.badge}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">{entry.subtitle}</span>
+                        </span>
+                        <ArrowRight
+                          className={`h-4 w-4 shrink-0 transition ${
+                            active ? 'translate-x-0.5 text-accent opacity-100' : 'text-slate-300 opacity-0'
+                          }`}
+                        />
+                      </button>
+                    </li>
+                  )
+                }
+
+                const { tool } = entry
                 const c = categoryById(tool.category)
                 const Icon = tool.icon
-                const active = idx === safeIdx
                 return (
                   <li key={tool.id} role="option" aria-selected={active}>
                     <button
                       type="button"
                       onMouseEnter={() => setActiveIdx(idx)}
-                      onClick={() => selectTool(tool)}
+                      onClick={() => executeEntry(entry)}
                       className={`flex w-full items-center gap-3.5 rounded-2xl px-3.5 py-2.5 text-left transition ${
                         active
-                          ? 'bg-slate-100/90 dark:bg-slate-800/80'
+                          ? 'bg-slate-100/90 ring-1 ring-accent/25 dark:bg-slate-800/80'
                           : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                       }`}
                     >
@@ -227,12 +448,12 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Footer keyboard hints */}
-        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:bg-[#090f1d] dark:text-slate-400">
+        <div className="relative z-10 flex items-center justify-between border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:bg-[#070c18] dark:text-slate-400">
           <span className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1"><kbd className="rounded bg-white px-1.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">↑↓</kbd> Navigate</span>
-            <span className="inline-flex items-center gap-1"><kbd className="rounded bg-white px-1.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"><CornerDownLeft className="inline h-3 w-3" /></kbd> Open</span>
+            <span className="inline-flex items-center gap-1"><kbd className="rounded bg-white px-1.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"><CornerDownLeft className="inline h-3 w-3" /></kbd> Run</span>
           </span>
-          <span>100% private · Runs in your browser</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider">100% LOCAL · ZERO CLOUD</span>
         </div>
       </div>
     </div>

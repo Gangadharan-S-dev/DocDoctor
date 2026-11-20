@@ -3,6 +3,7 @@ import { CloudUpload, FileUp, X, FileWarning, Trash2, Clipboard, ArrowUp, ArrowD
 import type { Tool } from '../data/tools'
 import { formatSize } from '../data/tools'
 import { validateFiles, type PickedFile } from '../lib/files'
+import { BorderBeam } from './FuturisticPrimitives'
 
 export type { PickedFile }
 
@@ -116,12 +117,19 @@ export default function UploadArea({ tool, files, onChange }: {
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files) }}
-        className={`group cursor-pointer rounded-3xl border-2 border-dashed px-6 py-10 text-center transition duration-200 sm:py-14 ${
+        className={`group relative cursor-pointer overflow-hidden rounded-3xl border-2 border-dashed px-6 py-10 text-center transition duration-200 sm:py-14 ${
           drag
             ? 'scale-[1.015] border-accent bg-accent-soft/80 shadow-inner ring-4 ring-accent/15'
-            : 'border-slate-300/90 bg-slate-50/70 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#0a1020] dark:hover:border-accent/60'
+            : 'border-slate-300/90 bg-slate-50/70 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#090f1e]/90 dark:hover:border-accent/60'
         }`}
       >
+        {drag && <BorderBeam durationSec={3.5} />}
+        {/* Precision HUD corner reticles */}
+        <span aria-hidden className="pointer-events-none absolute left-3.5 top-3.5 h-3.5 w-3.5 rounded-tl border-l-2 border-t-2 border-accent/35 transition group-hover:border-accent" />
+        <span aria-hidden className="pointer-events-none absolute right-3.5 top-3.5 h-3.5 w-3.5 rounded-tr border-r-2 border-t-2 border-accent/35 transition group-hover:border-accent" />
+        <span aria-hidden className="pointer-events-none absolute bottom-3.5 left-3.5 h-3.5 w-3.5 rounded-bl border-b-2 border-l-2 border-accent/35 transition group-hover:border-accent" />
+        <span aria-hidden className="pointer-events-none absolute bottom-3.5 right-3.5 h-3.5 w-3.5 rounded-br border-b-2 border-r-2 border-accent/35 transition group-hover:border-accent" />
+
         <span className={`brand-grad icon-3d mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}>
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
@@ -155,7 +163,7 @@ export default function UploadArea({ tool, files, onChange }: {
             </div>
             <button type="button" onClick={() => { onChange([]); setErrors([]) }} className="inline-flex items-center gap-1 text-xs font-bold text-red-600 hover:underline"><Trash2 className="h-3.5 w-3.5" /> Clear all</button>
           </div>
-          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:divide-slate-800/80 dark:border-slate-800 dark:bg-[#0d1425]">
             {files.map(({ file, id }, idx) => {
               const imgThumb = thumbUrls.get(id)
               const ext = (file.name.split('.').pop() ?? 'file').toLowerCase()
@@ -172,7 +180,7 @@ export default function UploadArea({ tool, files, onChange }: {
                   onDragLeave={() => setDragOverIdx(null)}
                   onDrop={(e) => handleDrop(e, idx)}
                   onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null) }}
-                  className={`flex items-center gap-3 px-4 py-2.5 transition ${isDragging ? 'opacity-30 bg-slate-100' : ''} ${isOver ? 'bg-accent/10 border-t-2 border-accent' : 'hover:bg-slate-50/70'}`}
+                  className={`flex items-center gap-3 px-4 py-2.5 transition ${isDragging ? 'opacity-30 bg-slate-100 dark:bg-slate-800' : ''} ${isOver ? 'bg-accent/10 border-t-2 border-accent' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}`}
                 >
                   {tool.multiple && files.length > 1 && (
                     <div className="flex items-center gap-1 text-slate-400">

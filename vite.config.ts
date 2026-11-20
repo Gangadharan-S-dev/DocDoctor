@@ -25,7 +25,7 @@ export default defineConfig({
         // by pptxgenjs/docx/office code, and if it lands inside the pptx-gen
         // chunk every jszip consumer statically imports (and the entry
         // preloads) all of PptxGenJS on first paint.
-        advancedChunks: {
+        codeSplitting: {
           groups: [
             { name: 'preload-helper', test: /preload-helper/, priority: 100 },
             { name: 'zip', test: /node_modules[\\/]jszip[\\/]/ },

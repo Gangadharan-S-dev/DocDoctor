@@ -8,6 +8,7 @@ import CommandPalette from './CommandPalette'
 import Toaster from './Toaster'
 import GlobalDropPortal from './GlobalDropPortal'
 import QuickDock from './QuickDock'
+import { ScrollProgressBar } from './FuturisticPrimitives'
 import { showToast } from '../lib/toast'
 
 type AccentId = 'cobalt' | 'coral' | 'emerald' | 'violet'
@@ -40,11 +41,11 @@ function useAccent(): [AccentId, (next: AccentId) => void] {
 
 export function Logo() {
   return (
-    <Link to="/" className="group flex items-center gap-2.5" aria-label="DocDoctor home">
-      <span className="brand-grad icon-3d flex h-10 w-10 items-center justify-center rounded-2xl text-white transition duration-200 group-hover:scale-105">
-        <Stethoscope className="h-5 w-5" />
+    <Link to="/" className="group flex items-center gap-2 sm:gap-2.5" aria-label="DocDoctor home">
+      <span className="brand-grad icon-3d flex h-9 w-9 items-center justify-center rounded-2xl text-white transition duration-200 group-hover:scale-105 sm:h-10 sm:w-10">
+        <Stethoscope className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
       </span>
-      <span className="font-display text-xl font-extrabold tracking-tight text-ink-950 dark:text-white">
+      <span className="font-display text-lg font-extrabold tracking-tight text-ink-950 dark:text-white sm:text-xl">
         Doc<span className="brand-text-grad">Doctor</span>
       </span>
     </Link>
@@ -99,8 +100,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </a>
 
       <header className="glass-bar sticky top-0 z-40">
-        <div className="mx-auto flex h-[72px] max-w-7xl items-center gap-3 px-4 sm:px-6">
-          <Logo />
+        <ScrollProgressBar />
+        <div className="mx-auto flex h-[68px] max-w-7xl items-center gap-1.5 px-3 sm:h-[72px] sm:gap-3 sm:px-6">
+          <div className="shrink-0">
+            <Logo />
+          </div>
 
           <nav className="ml-3 hidden items-center gap-1 lg:flex" aria-label="Primary">
             <NavLink to="/" end className={linkCls}>{t('nav.home')}</NavLink>
@@ -151,10 +155,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={() => setPaletteOpen(true)}
             aria-label="Search tools (Ctrl+K)"
-            className="ml-auto flex h-10 flex-1 items-center gap-2.5 rounded-2xl border border-slate-200/90 bg-slate-100/70 px-3.5 text-left text-sm font-semibold text-slate-500 transition hover:border-accent/40 hover:bg-white hover:text-ink-950 hover:shadow-xs dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-400 dark:hover:border-blue-500/40 dark:hover:bg-[#162238] dark:hover:text-white md:max-w-[280px]"
+            className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center gap-2.5 rounded-2xl border border-slate-200/90 bg-slate-100/70 px-0 text-left text-sm font-semibold text-slate-500 transition hover:border-accent/40 hover:bg-white hover:text-ink-950 hover:shadow-xs dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-400 dark:hover:border-blue-500/40 dark:hover:bg-[#162238] dark:hover:text-white sm:h-10 sm:w-auto sm:min-w-0 sm:flex-1 sm:justify-start sm:px-3.5 md:max-w-[280px]"
           >
             <Search className="h-4 w-4 shrink-0 text-accent" />
-            <span className="truncate">{t('nav.searchPlaceholder')}</span>
+            <span className="hidden truncate sm:inline">{t('nav.searchPlaceholder')}</span>
             <kbd className="ml-auto hidden shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-slate-500 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 sm:inline-block">
               Ctrl K
             </kbd>
@@ -165,7 +169,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </span>
 
           {/* Arc-style Studio Accent Picker */}
-          <div className="hidden items-center gap-1 rounded-xl border border-slate-200/80 bg-white px-2 py-1.5 dark:border-slate-700/80 dark:bg-[#111a2e] sm:flex" role="group" aria-label="Studio accent color">
+          <div className="hidden shrink-0 items-center gap-1 rounded-xl border border-slate-200/80 bg-white px-2 py-1.5 dark:border-slate-700/80 dark:bg-[#111a2e] sm:flex" role="group" aria-label="Studio accent color">
             {ACCENTS.map((a) => (
               <button
                 key={a.id}
@@ -187,7 +191,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             id="lang-select"
             value={lang}
             onChange={(e) => setLang(e.target.value as Lang)}
-            className="rounded-xl border border-slate-200/90 bg-white px-2.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200"
+            className="shrink-0 rounded-xl border border-slate-200/90 bg-white px-2 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200 sm:px-2.5"
             aria-label="Language"
           >
             {LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
@@ -197,14 +201,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={toggleTheme}
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
           >
             {dark ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
           </button>
 
           <button
             type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200 lg:hidden"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-200 sm:h-10 sm:w-10 lg:hidden"
             aria-label="Toggle menu"
             aria-expanded={open}
             onClick={() => setOpen(!open)}
@@ -232,11 +236,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               ))}
               <NavLink to="/about" onClick={() => setOpen(false)} className="col-span-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-center text-sm font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">{t('nav.about')}</NavLink>
             </div>
+            <div className="mt-3 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5 dark:border-slate-800 dark:bg-[#101828]" role="group" aria-label="Mobile studio accent color">
+              <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300">Studio accent</span>
+              <div className="flex items-center gap-2">
+                {ACCENTS.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setAccent(a.id)}
+                    aria-label={`${a.label} accent`}
+                    aria-pressed={accent === a.id}
+                    className={`h-5 w-5 rounded-full transition duration-150 ${
+                      accent === a.id ? 'scale-115 ring-2 ring-slate-900 ring-offset-2 dark:ring-white dark:ring-offset-[#101828]' : 'opacity-70'
+                    }`}
+                    style={{ backgroundColor: a.dot }}
+                  />
+                ))}
+              </div>
+            </div>
           </nav>
         )}
       </header>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        dark={dark}
+        onToggleTheme={toggleTheme}
+        accent={accent}
+        onSetAccent={setAccent}
+        lang={lang}
+        onToggleLang={() => setLang(lang === 'en' ? 'es' : 'en')}
+      />
       <GlobalDropPortal />
       <QuickDock onOpenSearch={() => setPaletteOpen(true)} />
       <Toaster />

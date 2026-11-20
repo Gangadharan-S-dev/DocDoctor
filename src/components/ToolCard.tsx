@@ -70,11 +70,11 @@ export default function ToolCard({ tool }: { tool: Tool }) {
           background: 'radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.28), transparent 60%)',
         }}
       />
-      {/* Subtle vibrant corner glow on hover */}
+      {/* Subtle vibrant corner glow on hover (zero-blur radial gradient) */}
       <span
         aria-hidden
-        className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-0 blur-2xl transition duration-300 group-hover:opacity-25 dark:group-hover:opacity-30"
-        style={{ backgroundColor: cat.color }}
+        className="pointer-events-none absolute -right-12 -top-12 h-36 w-36 rounded-full opacity-0 transition-opacity duration-300 group-hover:opacity-25 dark:group-hover:opacity-30"
+        style={{ background: `radial-gradient(circle, ${cat.color} 0%, transparent 70%)` }}
       />
       {/* Crisp category color bar at top */}
       <span

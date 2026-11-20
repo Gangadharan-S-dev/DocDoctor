@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   Search, ShieldCheck, MousePointerClick, Settings2, Download, Lock, Timer,
-  ArrowRight, ArrowUpRight, FileCheck2, Sparkles, X, File as FileIcon, Zap,
+  ArrowRight, ArrowUpRight, FileCheck2, Sparkles, X, File as FileIcon, Files, Zap, Workflow,
 } from 'lucide-react'
 import { CATEGORIES, TOOLS, categoryById, formatSize, popularTools, toolById, toolsByCategory, type CategoryId, type Tool } from '../data/tools'
 import ToolCard from '../components/ToolCard'
@@ -10,8 +10,9 @@ import {
   ExcelBentoArt, FormatMarquee, Hero3DFileStack, ImageBentoArt, LivePlayground, OtherBentoArt,
   PdfBentoArt, PptBentoArt, PrivacyGlassVault3D, Reveal, SpotlightCard, WordBentoArt,
 } from '../components/BentoVisuals'
+import { BorderBeam, GridBeamCanvas, MagneticWrap, TelemetryStrip } from '../components/FuturisticPrimitives'
 import { getFavorites, getRecent, onPrefsChange } from '../lib/prefs'
-import { suggestToolsForFile } from '../lib/smartSuggest'
+import { suggestToolsForFiles } from '../lib/smartSuggest'
 import { showToast } from '../lib/toast'
 import { useI18n } from '../lib/i18n'
 
@@ -24,12 +25,46 @@ const QUICK_PICKS_BY_CAT: Record<CategoryId, string[]> = {
   other: ['zip-files', 'extract-zip', 'json-formatter', 'csv-tools', 'markdown-converter'],
 }
 
+const WORKFLOW_RECIPES = [
+  {
+    id: 'exam-photo',
+    title: 'Exam & Visa Portal Photo',
+    desc: 'Crop biometric 300 DPI passport photo, then hit exact 20 KB / 50 KB upload limits.',
+    color: '#0EA5A0',
+    steps: [
+      { id: 'passport-photo', label: 'Passport 300 DPI' },
+      { id: 'compress-image-kb', label: 'Compress to 50 KB' },
+    ],
+  },
+  {
+    id: 'job-pack',
+    title: 'Job Application PDF Pack',
+    desc: 'Combine resume + certificates, shrink file size for email, and add a drawn signature.',
+    color: '#E5484D',
+    steps: [
+      { id: 'merge-pdf', label: 'Merge PDF' },
+      { id: 'compress-pdf', label: 'Compress' },
+      { id: 'sign-pdf', label: 'Sign PDF' },
+    ],
+  },
+  {
+    id: 'safe-share',
+    title: 'Share-Safe Private Document',
+    desc: 'Permanently blur ID numbers/faces and strip hidden EXIF camera GPS metadata.',
+    color: '#7C3AED',
+    steps: [
+      { id: 'blur-image', label: 'Blur & Redact' },
+      { id: 'image-metadata', label: 'Scrub EXIF' },
+    ],
+  },
+]
+
 export default function Home() {
   const [q, setQ] = useState('')
   const [popCat, setPopCat] = useState<'all' | CategoryId>('all')
   const [favIds, setFavIds] = useState<string[]>(() => getFavorites())
   const [recentIds, setRecentIds] = useState<string[]>(() => getRecent())
-  const [smartFile, setSmartFile] = useState<File | null>(null)
+  const [smartFiles, setSmartFiles] = useState<File[]>([])
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { t } = useI18n()
@@ -45,23 +80,30 @@ export default function Home() {
     return TOOLS.filter((tool) => `${tool.name} ${tool.description} ${tool.acceptLabel}`.toLowerCase().includes(s)).slice(0, 6)
   }, [q])
 
-  const smartSuggestions = useMemo(() => (smartFile ? suggestToolsForFile(smartFile) : []), [smartFile])
+  const { tools: smartSuggestions, batchLabel } = useMemo(
+    () => suggestToolsForFiles(smartFiles),
+    [smartFiles],
+  )
+  const smartTotalSize = useMemo(() => smartFiles.reduce((acc, f) => acc + f.size, 0), [smartFiles])
 
   const handleSmartPick = useCallback((files: FileList | File[]) => {
-    const first = Array.from(files)[0]
-    if (first) setSmartFile(first)
+    const arr = Array.from(files)
+    if (arr.length) setSmartFiles(arr)
   }, [])
 
-  // Support Ctrl+V paste right on the homepage hero
+  // Support Ctrl+V paste right on the homepage hero (single or multiple files)
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
-      const f = e.clipboardData?.files?.[0]
-      if (f) {
+      const pasted = Array.from(e.clipboardData?.files ?? [])
+      if (pasted.length) {
         e.preventDefault()
-        setSmartFile(f)
-        showToast(`Pasted ${f.name} — pick an action`, 'success')
+        setSmartFiles(pasted)
+        showToast(
+          pasted.length === 1 ? `Pasted ${pasted[0].name} — pick an action` : `Pasted ${pasted.length} files — pick a batch tool`,
+          'success',
+        )
       }
     }
     window.addEventListener('paste', onPaste)
@@ -79,16 +121,23 @@ export default function Home() {
 
   return (
     <>
-      {/* ── Vibrant Bento Hero ────────────────────────────────────────── */}
-      <section className="bento-hero-mesh bento-dots relative overflow-hidden border-b border-slate-200/80 dark:border-slate-800/80">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:py-20">
+      {/* ── Spatial Telemetry & Bento Hero ───────────────────────────── */}
+      <section className="bento-hero-mesh relative overflow-hidden border-b border-slate-200/80 dark:border-slate-800/80">
+        <GridBeamCanvas />
+        <div className="relative z-10 mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:py-20">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 bg-white/90 px-3.5 py-1.5 text-xs font-extrabold text-blue-700 shadow-2xs backdrop-blur dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+            <div
+              className="hero-stagger inline-flex items-center gap-2 rounded-full border border-blue-200/80 bg-white/95 px-3.5 py-1.5 text-xs font-extrabold text-blue-700 shadow-2xs dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300"
+              style={{ '--stagger': '0ms' } as React.CSSProperties}
+            >
               <Sparkles className="h-3.5 w-3.5" />
               <span>{t('home.kicker')}</span>
             </div>
 
-            <h1 className="mt-5 font-display text-4xl font-extrabold leading-[1.06] tracking-tight text-ink-950 dark:text-white sm:text-5xl lg:text-[3.6rem]">
+            <h1
+              className="hero-stagger display-hero mt-5 font-display font-extrabold text-ink-950 dark:text-white"
+              style={{ '--stagger': '70ms' } as React.CSSProperties}
+            >
               {t('home.titleA')}
               <br />
               <span className="brand-text-grad">
@@ -96,14 +145,23 @@ export default function Home() {
               </span>
             </h1>
 
-            <p className="mt-5 max-w-lg text-lg leading-relaxed text-slate-600 dark:text-slate-300">
+            <p
+              className="hero-stagger mt-5 max-w-lg text-base leading-relaxed text-slate-600 dark:text-slate-300 sm:text-lg"
+              style={{ '--stagger': '130ms' } as React.CSSProperties}
+            >
               {t('home.sub')}
             </p>
+
+            {/* Live Browser Engine Telemetry Strip */}
+            <div className="hero-stagger" style={{ '--stagger': '180ms' } as React.CSSProperties}>
+              <TelemetryStrip toolCount={TOOLS.length} />
+            </div>
 
             {/* Hero search */}
             <form
               role="search"
-              className="relative mt-7 max-w-lg"
+              className="hero-stagger relative mt-6 max-w-lg"
+              style={{ '--stagger': '230ms' } as React.CSSProperties}
               onSubmit={(e) => { e.preventDefault(); navigate(`/tools?q=${encodeURIComponent(q)}`) }}
             >
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
@@ -118,7 +176,7 @@ export default function Home() {
               />
               <button
                 type="submit"
-                className="brand-grad absolute right-2 top-1/2 -translate-y-1/2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110"
+                className="brand-grad absolute right-2 top-1/2 -translate-y-1/2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110 active:scale-[.98]"
               >
                 Search
               </button>
@@ -150,40 +208,67 @@ export default function Home() {
               )}
             </form>
 
-            {/* Vibrant Bento Stat Chips */}
-            <dl className="mt-8 grid max-w-lg grid-cols-3 gap-3">
+            {/* Primary CTA & Spatial Telemetry KPI Strip */}
+            <div
+              className="hero-stagger mt-6 flex flex-wrap items-center gap-3"
+              style={{ '--stagger': '280ms' } as React.CSSProperties}
+            >
+              <MagneticWrap>
+                <Link to="/tools" className="btn-accent">
+                  Explore all {TOOLS.length} tools <ArrowRight className="h-4 w-4" />
+                </Link>
+              </MagneticWrap>
+              <Link to="/tool/compress-pdf" className="btn-ghost">
+                Compress PDF
+              </Link>
+              <Link to="/tool/compress-image" className="btn-ghost hidden sm:inline-flex">
+                Compress Image
+              </Link>
+            </div>
+
+            <dl
+              className="hero-stagger mt-7 grid max-w-lg grid-cols-3 gap-3"
+              style={{ '--stagger': '330ms' } as React.CSSProperties}
+            >
               {[
-                { v: `${TOOLS.length}`, l: 'real tools', bg: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-200/70 dark:border-blue-500/20' },
-                { v: '100%', l: 'free forever', bg: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-200/70 dark:border-teal-500/20' },
-                { v: '0 MB', l: 'cloud stored', bg: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-200/70 dark:border-violet-500/20' },
+                { v: `${TOOLS.length}`, l: 'real tools', tag: 'ENGINES', bg: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-200/70 dark:border-blue-500/25' },
+                { v: '100%', l: 'free forever', tag: 'ACCESS', bg: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-200/70 dark:border-teal-500/25' },
+                { v: '0 MB', l: 'cloud stored', tag: 'PRIVACY', bg: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-200/70 dark:border-violet-500/25' },
               ].map((s) => (
-                <div key={s.l} className={`rounded-2xl border px-3.5 py-3 backdrop-blur-sm ${s.bg}`}>
-                  <dt className="sr-only">{s.l}</dt>
-                  <dd className="font-display text-xl font-extrabold">{s.v}</dd>
-                  <dd className="text-[11px] font-bold opacity-80">{s.l}</dd>
+                <div key={s.l} className={`rounded-2xl border px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.22)] ${s.bg}`}>
+                  <dt className="font-mono text-[9px] font-extrabold uppercase tracking-[0.14em] opacity-70">{s.tag}</dt>
+                  <dd className="mt-0.5 font-display text-xl font-extrabold tabular-nums">{s.v}</dd>
+                  <dd className="text-[11px] font-bold opacity-85">{s.l}</dd>
                 </div>
               ))}
             </dl>
           </div>
 
-          {/* ── Right Hero: Interactive Smart Dropzone Bento Card ─────── */}
-          <div className="bento-card p-6 sm:p-7">
-            <div className="flex items-center justify-between gap-2">
+          {/* ── Right Hero: Spatial Glass Smart Drop Studio Card ─────── */}
+          <div
+            className="hero-stagger glass-spatial glass-grain p-6 sm:p-7"
+            style={{ '--stagger': '160ms' } as React.CSSProperties}
+          >
+            <BorderBeam durationSec={8} />
+            <div className="relative z-10 flex items-center justify-between gap-2">
               <div>
-                <p className="font-display text-base font-extrabold text-ink-950 dark:text-white">
-                  {smartFile ? 'Pick an instant action' : 'Smart Drop Studio'}
+                <p className="flex items-center gap-2 font-display text-base font-extrabold text-ink-950 dark:text-white">
+                  <span>{smartFiles.length > 0 ? 'Pick an instant action' : 'Smart Drop Studio'}</span>
+                  <span className="rounded-md bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] font-extrabold uppercase tracking-wider text-accent dark:bg-blue-500/15 dark:text-blue-300">
+                    {smartFiles.length > 1 ? `BATCH · ${smartFiles.length}` : 'MULTI-FILE'}
+                  </span>
                 </p>
                 <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                  {smartFile
-                    ? 'Your file is ready — click any tool below to open it pre-loaded.'
-                    : 'Drop any file (or press Ctrl+V) for instant 1-click tool suggestions.'}
+                  {smartFiles.length > 0
+                    ? `${batchLabel || 'Ready'} — click any tool below to launch pre-loaded.`
+                    : 'Drop 1 or multiple files (or press Ctrl+V) for instant 1-click suggestions.'}
                 </p>
               </div>
-              {smartFile && (
+              {smartFiles.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setSmartFile(null)}
-                  aria-label="Clear dropped file"
+                  onClick={() => setSmartFiles([])}
+                  aria-label="Clear dropped files"
                   className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-ink-950 dark:hover:bg-slate-800 dark:hover:text-white"
                 >
                   <X className="h-4 w-4" />
@@ -191,26 +276,33 @@ export default function Home() {
               )}
             </div>
 
-            {smartFile ? (
+            {smartFiles.length > 0 ? (
               <div className="animate-bento-pop mt-5">
                 <div className="flex items-center gap-3 rounded-2xl border border-blue-200/80 bg-blue-50/70 p-3.5 dark:border-blue-500/30 dark:bg-blue-500/10">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 text-white shadow-sm">
-                    <FileIcon className="h-5 w-5" />
+                    {smartFiles.length > 1 ? <Files className="h-5 w-5" /> : <FileIcon className="h-5 w-5" />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-display text-sm font-bold text-ink-950 dark:text-white">{smartFile.name}</p>
-                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{formatSize(smartFile.size)} · Ready in browser memory</p>
+                    <p className="truncate font-display text-sm font-bold text-ink-950 dark:text-white">
+                      {smartFiles.length === 1
+                        ? smartFiles[0].name
+                        : `${smartFiles[0].name} + ${smartFiles.length - 1} more`}
+                    </p>
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {formatSize(smartTotalSize)} · {batchLabel}
+                    </p>
                   </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2.5">
                   {smartSuggestions.map((tool) => {
                     const c = categoryById(tool.category)
+                    const toPass = tool.multiple ? smartFiles : smartFiles.slice(0, 1)
                     return (
                       <button
                         key={tool.id}
                         type="button"
-                        onClick={() => navigate(`/tool/${tool.id}`, { state: { chainedFiles: [smartFile] } })}
+                        onClick={() => navigate(`/tool/${tool.id}`, { state: { chainedFiles: toPass } })}
                         className="group flex items-center gap-2.5 rounded-2xl border border-slate-200/90 bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card dark:border-slate-700/80 dark:bg-[#121b30] dark:hover:border-slate-600"
                       >
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${c.color}18`, color: c.color }}>
@@ -218,7 +310,9 @@ export default function Home() {
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs font-extrabold text-ink-950 dark:text-white">{tool.name}</span>
-                          <span className="block truncate text-[10px] font-semibold text-slate-400">Open with file →</span>
+                          <span className="block truncate text-[10px] font-semibold text-slate-400">
+                            {toPass.length > 1 ? `Open with ${toPass.length} files →` : 'Open with file →'}
+                          </span>
                         </span>
                       </button>
                     )
@@ -235,15 +329,21 @@ export default function Home() {
                   onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
                   onDragLeave={() => setDragActive(false)}
                   onDrop={(e) => { e.preventDefault(); setDragActive(false); handleSmartPick(e.dataTransfer.files) }}
-                  className={`mt-4 cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition duration-200 ${
+                  className={`group/drop relative mt-4 cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition duration-200 ${
                     dragActive
                       ? 'scale-[1.01] border-accent bg-accent-soft/80 ring-4 ring-accent/15'
-                      : 'border-slate-300/90 bg-slate-50/80 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700 dark:bg-[#0a1020] dark:hover:border-accent/60'
+                      : 'border-slate-300/90 bg-slate-50/75 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#090f1e]/85 dark:hover:border-accent/60'
                   }`}
                 >
+                  {/* Precision HUD corner reticles */}
+                  <span aria-hidden className="pointer-events-none absolute left-2.5 top-2.5 h-3 w-3 rounded-tl border-l-2 border-t-2 border-accent/40 transition group-hover/drop:border-accent" />
+                  <span aria-hidden className="pointer-events-none absolute right-2.5 top-2.5 h-3 w-3 rounded-tr border-r-2 border-t-2 border-accent/40 transition group-hover/drop:border-accent" />
+                  <span aria-hidden className="pointer-events-none absolute bottom-2.5 left-2.5 h-3 w-3 rounded-bl border-b-2 border-l-2 border-accent/40 transition group-hover/drop:border-accent" />
+                  <span aria-hidden className="pointer-events-none absolute bottom-2.5 right-2.5 h-3 w-3 rounded-br border-b-2 border-r-2 border-accent/40 transition group-hover/drop:border-accent" />
+
                   <Hero3DFileStack dragActive={dragActive} />
                   <p className="mt-2 font-display text-sm font-extrabold text-ink-950 dark:text-white">
-                    Drop any PDF, image, Word or Excel file
+                    Drop 1 or multiple PDFs, images, or Office files
                   </p>
                   <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1.5">
                     {[
@@ -266,6 +366,7 @@ export default function Home() {
                   <input
                     ref={fileInputRef}
                     type="file"
+                    multiple
                     className="hidden"
                     onChange={(e) => { if (e.target.files) handleSmartPick(e.target.files); e.target.value = '' }}
                   />
@@ -330,6 +431,62 @@ export default function Home() {
 
       {/* ── Interactive Live Before/After Playground ─────────────────── */}
       <LivePlayground />
+
+      {/* ── One-Click Chained Workflow Recipes ────────────────────────── */}
+      <section className="mx-auto max-w-7xl px-4 pt-12 sm:px-6" aria-labelledby="recipes-heading">
+        <Reveal>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold uppercase tracking-widest text-accent">
+                <Workflow className="h-3.5 w-3.5" /> Multi-step studio chains
+              </p>
+              <h2 id="recipes-heading" className="display-section mt-1 font-display font-extrabold text-ink-950 dark:text-white">
+                One-click workflow recipes
+              </h2>
+            </div>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Outputs pass directly between tools in browser memory
+            </span>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            {WORKFLOW_RECIPES.map((r) => (
+              <div
+                key={r.id}
+                className="bento-card group flex flex-col justify-between p-5 hover:-translate-y-0.5 hover:shadow-lift"
+                style={{ backgroundImage: `radial-gradient(280px circle at 96% 8%, ${r.color}1c, transparent 62%)` }}
+              >
+                <div>
+                  <h3 className="font-display text-base font-extrabold text-ink-950 dark:text-white">{r.title}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{r.desc}</p>
+                  <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                    {r.steps.map((st, idx) => (
+                      <span key={st.id} className="inline-flex items-center gap-1.5">
+                        <Link
+                          to={`/tool/${st.id}`}
+                          className="rounded-xl border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[11px] font-extrabold text-ink-950 transition hover:border-accent hover:text-accent dark:border-slate-700/80 dark:bg-[#131d33] dark:text-slate-100"
+                        >
+                          {st.label}
+                        </Link>
+                        {idx < r.steps.length - 1 && (
+                          <ArrowRight className="h-3 w-3 shrink-0" style={{ color: r.color }} aria-hidden />
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <Link
+                  to={`/tool/${r.steps[0].id}`}
+                  className="mt-5 inline-flex items-center gap-1 text-xs font-extrabold transition group-hover:translate-x-0.5"
+                  style={{ color: r.color }}
+                >
+                  Start recipe <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            ))}
+          </div>
+        </Reveal>
+      </section>
 
       {/* ── Asymmetric Vibrant Bento Category Grid ────────────────────── */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6" aria-labelledby="cats">
@@ -600,16 +757,19 @@ export default function Home() {
         <SpotlightCard
           glowColor="rgba(59, 130, 246, 0.22)"
           tilt={false}
-          className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#090e1a] px-6 py-10 text-white shadow-lift sm:px-10 sm:py-12"
+          className="relative overflow-hidden rounded-[2rem] border border-slate-800/90 bg-[#060913] px-6 py-10 text-white shadow-lift sm:px-10 sm:py-12"
+          style={{
+            backgroundImage:
+              'radial-gradient(460px circle at 92% 8%, rgba(37, 99, 235, 0.22), transparent 62%), radial-gradient(420px circle at 10% 92%, rgba(20, 184, 166, 0.18), transparent 60%)',
+          }}
         >
-          <span aria-hidden className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-blue-600/25 blur-3xl" />
-          <span aria-hidden className="pointer-events-none absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-teal-500/20 blur-3xl" />
+          <BorderBeam durationSec={9} />
           <div className="relative grid gap-8 lg:grid-cols-[1.05fr_auto_.95fr] lg:items-center">
             <div>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-400/30 bg-teal-400/10 px-3 py-1 text-xs font-extrabold text-teal-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-400/30 bg-teal-400/10 px-3 py-1 font-mono text-[11px] font-extrabold uppercase tracking-wider text-teal-300">
                 <Lock className="h-3.5 w-3.5" /> Zero-knowledge architecture
               </span>
-              <h2 id="privacy" className="mt-4 font-display text-2xl font-extrabold sm:text-3xl">
+              <h2 id="privacy" className="display-section mt-4 font-display font-extrabold">
                 Private by design. Built for speed.
               </h2>
               <p className="mt-2.5 max-w-xl text-sm leading-relaxed text-slate-300 sm:text-base">
@@ -628,7 +788,7 @@ export default function Home() {
                 { icon: Timer, label: 'Auto-delete', sub: '≤60 min hard cap', color: '#14b8a6' },
                 { icon: FileCheck2, label: 'Real engines', sub: 'Verified outputs', color: '#a855f7' },
               ].map((item) => (
-                <li key={item.label} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm">
+                <li key={item.label} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.06] p-3.5">
                   <span className="icon-3d flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: item.color }}>
                     <item.icon className="h-4.5 w-4.5" />
                   </span>
