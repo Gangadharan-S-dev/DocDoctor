@@ -11,14 +11,19 @@ import '@fontsource/manrope/latin-800.css'
 import '@fontsource/sora/latin-600.css'
 import '@fontsource/sora/latin-700.css'
 import '@fontsource/sora/latin-800.css'
+import '@fontsource/jetbrains-mono/latin-500.css'
+import '@fontsource/jetbrains-mono/latin-700.css'
 import './index.css'
+import { syncThemeColor } from './lib/viewTransition'
 
 // Apply saved theme and studio accent before first paint to avoid a flash.
 try {
   const saved = localStorage.getItem('docdoctor:theme')
-  if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  const isDark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  if (isDark) {
     document.documentElement.classList.add('dark')
   }
+  syncThemeColor(isDark)
   const savedAccent = localStorage.getItem('docdoctor:accent')
   if (savedAccent === 'cobalt' || savedAccent === 'coral' || savedAccent === 'emerald' || savedAccent === 'violet') {
     document.documentElement.dataset.accent = savedAccent

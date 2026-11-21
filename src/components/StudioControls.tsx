@@ -1,6 +1,133 @@
-import { useEffect, useState } from 'react'
-import { Check, Copy, Download, Grid, SplitSquareVertical, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { formatSize } from '../data/tools'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Check, Copy, Download, Grid, SplitSquareVertical, Workflow, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { formatSize, type CategoryId } from '../data/tools'
+import StudioDialog from './StudioDialog'
+
+/**
+ * WCAG AA category badge/pill driven by CSS custom properties (`data-category`).
+ * Ensures >=4.5:1 text contrast in both light and dark modes for all 6 categories.
+ */
+export function CategoryPill({
+  category,
+  children,
+  className = '',
+}: {
+  category: CategoryId
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <span
+      data-category={category}
+      className={`cat-pill inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold tracking-wide ${className}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * Reusable elevated Studio Panel container for tool configuration blocks.
+ */
+export function StudioPanel({
+  title,
+  subtitle,
+  action,
+  children,
+  className = '',
+}: {
+  title?: string
+  subtitle?: string
+  action?: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`rounded-2xl border border-slate-200/85 bg-surface-2/75 p-4 dark:border-slate-800/90 dark:bg-surface-2/85 ${className}`}>
+      {(title || action) && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            {title && <p className="font-display text-sm font-extrabold text-fg-primary">{title}</p>}
+            {subtitle && <p className="mt-0.5 text-xs text-fg-muted">{subtitle}</p>}
+          </div>
+          {action}
+        </div>
+      )}
+      {children}
+    </div>
+  )
+}
+
+/**
+ * Visual multi-step tool chaining pipeline bar showing completed steps,
+ * active tool stage, and live payload size telemetry.
+ */
+export function PipelineBreadcrumb({
+  steps,
+  currentToolName,
+  category,
+  fileCount,
+  totalBytes,
+}: {
+  steps: string[]
+  currentToolName: string
+  category?: CategoryId
+  fileCount?: number
+  totalBytes?: number
+}) {
+  if (steps.length === 0) return null
+
+  return (
+    <div
+      data-category={category}
+      className="mb-4 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-slate-200/85 bg-surface-2/80 px-3.5 py-2.5 text-xs font-bold text-fg-primary shadow-2xs dark:border-slate-800 dark:bg-surface-2/90"
+      aria-label="Multi-step workflow pipeline"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="cat-pill inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-mono text-[10px] font-extrabold uppercase tracking-widest">
+          <Workflow className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Pipeline
+        </span>
+
+        {steps.map((stepName, idx) => (
+          <span key={`${stepName}-${idx}`} className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-1 px-2.5 py-1 text-[11px] font-bold text-fg-secondary ring-1 ring-slate-200/90 dark:ring-slate-700/80">
+              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-teal-500/15 text-teal-700 dark:text-teal-300">
+                <Check className="h-2.5 w-2.5" aria-hidden />
+              </span>
+              <span>{stepName}</span>
+            </span>
+            <span
+              aria-hidden
+              className="h-[2px] w-3.5 rounded-full"
+              style={{ background: 'linear-gradient(90deg, #14b8a6, var(--ws-cat))' }}
+            />
+          </span>
+        ))}
+
+        <span
+          className="inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-extrabold text-white shadow-sm"
+          style={{ backgroundColor: 'var(--ws-cat)' }}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden />
+          <span>{currentToolName}</span>
+        </span>
+      </div>
+
+      {typeof fileCount === 'number' && fileCount > 0 && (
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-1 px-2.5 py-1 font-mono text-[11px] font-bold tabular-nums text-fg-muted ring-1 ring-slate-200/80 dark:ring-slate-700/80">
+          <span>{fileCount} {fileCount === 1 ? 'file' : 'files'}</span>
+          {typeof totalBytes === 'number' && totalBytes > 0 && (
+            <>
+              <span aria-hidden className="text-slate-300 dark:text-slate-600">·</span>
+              <span>{formatSize(totalBytes)}</span>
+            </>
+          )}
+        </span>
+      )}
+    </div>
+  )
+}
 
 /** Tactile filled-track Studio Slider that adapts automatically to the active Studio Accent theme. */
 export function StudioSlider({
@@ -32,7 +159,7 @@ export function StudioSlider({
         <span
           onDoubleClick={defaultValue !== undefined ? () => onChange(defaultValue) : undefined}
           title={defaultValue !== undefined ? 'Double-click to reset' : undefined}
-          className="inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-extrabold tabular-nums"
+          className="inline-flex items-center rounded-lg px-2 py-0.5 font-mono text-xs font-bold tabular-nums"
           style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--color-accent)' }}
         >
           {value}{suffix}
@@ -72,35 +199,48 @@ export function StudioSkeleton({ label = 'Loading studio editor…' }: { label?:
   )
 }
 
-/** 3-Step Studio Progress Bar: 1. Upload -> 2. Customize -> 3. Download */
-export function WorkspaceStepper({ step }: { step: 1 | 2 | 3 }) {
+/** 3-Step Studio Progress Bar: 1. Upload -> 2. Customize -> 3. Download (adapts to category color). */
+export function WorkspaceStepper({ step, category }: { step: 1 | 2 | 3; category?: CategoryId }) {
   const steps = [
     { n: 1 as const, label: 'Upload' },
     { n: 2 as const, label: 'Customize' },
     { n: 3 as const, label: 'Download' },
   ]
   return (
-    <ol className="mb-5 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5 dark:border-slate-800 dark:bg-[#0b1120]" aria-label="Workspace progress">
+    <ol
+      data-category={category}
+      className="mb-5 flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-surface-2/70 px-3.5 py-2.5 dark:border-slate-800 dark:bg-[#0b1120]"
+      aria-label="Workspace progress"
+    >
       {steps.map((s, idx) => {
         const done = step > s.n
         const active = step === s.n
         return (
           <li key={s.n} className="flex flex-1 items-center gap-2">
             <span
-              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold transition duration-200 ${
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-bold transition duration-200 ${
                 done
                   ? 'bg-teal-600 text-white shadow-xs'
                   : active
-                    ? 'brand-grad text-white shadow-sm ring-4 ring-accent/20'
+                    ? 'text-white shadow-sm'
                     : 'bg-slate-200/90 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
               }`}
+              style={
+                active
+                  ? {
+                      backgroundColor: category ? 'var(--ws-cat)' : undefined,
+                      backgroundImage: category ? undefined : 'var(--accent-grad)',
+                      boxShadow: `0 0 0 4px ${category ? 'var(--ws-cat-glow)' : 'var(--accent-glow)'}`,
+                    }
+                  : undefined
+              }
             >
               {done ? <Check className="h-3.5 w-3.5" /> : s.n}
             </span>
             <span
               className={`text-xs font-extrabold tracking-tight ${
                 active
-                  ? 'text-ink-950 dark:text-white'
+                  ? 'text-fg-primary'
                   : done
                     ? 'text-teal-700 dark:text-teal-300'
                     : 'text-slate-400 dark:text-slate-500'
@@ -180,15 +320,15 @@ export function SavingsGauge({
             </linearGradient>
           </defs>
         </svg>
-        <span className="absolute text-[11px] font-extrabold tabular-nums text-teal-700 dark:text-teal-300">
+        <span className="absolute font-mono text-[10px] font-bold tabular-nums text-teal-700 dark:text-teal-300">
           -{displayPct}%
         </span>
       </div>
       <div className="text-xs leading-tight">
         <p className="font-extrabold text-teal-700 dark:text-teal-300">
-          Saved {formatSize(Math.max(0, totalIn - totalOut))}
+          Saved <span className="font-mono tabular-nums">{formatSize(Math.max(0, totalIn - totalOut))}</span>
         </p>
-        <p className="mt-0.5 font-semibold text-slate-500 dark:text-slate-400">
+        <p className="mt-0.5 font-mono text-[11px] font-semibold tabular-nums text-slate-500 dark:text-slate-400">
           {formatSize(totalIn)} → {formatSize(totalOut)}
         </p>
       </div>
@@ -196,7 +336,7 @@ export function SavingsGauge({
   )
 }
 
-/** Zoomable Fullscreen Image Inspector Lightbox */
+/** Zoomable Fullscreen Image Inspector Lightbox powered by StudioDialog. */
 export function ImageLightbox({
   imageUrl,
   originalUrl,
@@ -220,39 +360,28 @@ export function ImageLightbox({
   const [checker, setChecker] = useState(false)
   const [showOrig, setShowOrig] = useState(false)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const activeSrc = showOrig && originalUrl ? originalUrl : imageUrl
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Inspect ${fileName}`}
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950/88 p-3 backdrop-blur-md sm:p-6"
-      onClick={onClose}
+    <StudioDialog
+      open
+      onClose={onClose}
+      ariaLabel={`Inspect ${fileName}`}
+      placement="fullscreen"
+      beam={false}
     >
       {/* Top Toolbar */}
-      <div
-        className="mx-auto mb-3 flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-slate-900/90 px-4 py-2.5 text-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="mx-auto mb-3 flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#0d1425]/95 px-4 py-2.5 text-white shadow-xl">
         <div className="min-w-0">
           <p className="truncate font-display text-sm font-extrabold">{fileName}</p>
-          <p className="text-[11px] font-semibold text-slate-400">
+          <p className="font-mono text-[11px] font-semibold tabular-nums text-slate-400">
             {formatSize(sizeBytes)} · {showOrig ? 'Viewing Original' : 'Viewing Output'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* Zoom presets */}
-          <div className="flex items-center rounded-xl border border-white/10 bg-white/5 p-0.5 text-xs font-bold">
+          <div className="flex items-center rounded-xl border border-white/10 bg-white/5 p-0.5 font-mono text-xs font-bold">
             {(['fit', 1, 1.5, 2] as const).map((z) => (
               <button
                 key={String(z)}
@@ -331,9 +460,8 @@ export function ImageLightbox({
       {/* Zoomable Canvas Area */}
       <div
         className={`mx-auto flex flex-1 w-full max-w-6xl items-center justify-center overflow-auto rounded-3xl border border-white/10 p-4 ${
-          checker ? 'checker-bg' : 'bg-slate-900'
+          checker ? 'checker-bg' : 'bg-[#090e1a]'
         }`}
-        onClick={(e) => e.stopPropagation()}
       >
         <img
           src={activeSrc}
@@ -348,6 +476,6 @@ export function ImageLightbox({
           }`}
         />
       </div>
-    </div>
+    </StudioDialog>
   )
 }

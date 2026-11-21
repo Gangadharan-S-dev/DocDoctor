@@ -1,4 +1,4 @@
-export type ToastTone = 'info' | 'success' | 'accent'
+export type ToastTone = 'info' | 'success' | 'accent' | 'error'
 
 export interface ToastItem {
   id: string

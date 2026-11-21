@@ -10,6 +10,7 @@ import GlobalDropPortal from './GlobalDropPortal'
 import QuickDock from './QuickDock'
 import { ScrollProgressBar } from './FuturisticPrimitives'
 import { showToast } from '../lib/toast'
+import { runThemeTransition, syncThemeColor } from '../lib/viewTransition'
 
 type AccentId = 'cobalt' | 'coral' | 'emerald' | 'violet'
 const ACCENTS: { id: AccentId; label: string; dot: string }[] = [
@@ -62,9 +63,20 @@ function useTheme(): [boolean, () => void] {
   })
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
+    syncThemeColor(dark)
     try { localStorage.setItem('docdoctor:theme', dark ? 'dark' : 'light') } catch { /* ignore */ }
   }, [dark])
-  return [dark, () => setDark((d) => !d)]
+
+  const toggle = () => {
+    const next = !dark
+    runThemeTransition(() => {
+      document.documentElement.classList.toggle('dark', next)
+      syncThemeColor(next)
+      setDark(next)
+    })
+  }
+
+  return [dark, toggle]
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -124,18 +136,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       <Link
                         key={c.id}
                         to={`/category/${c.id}`}
+                        data-category={c.id}
                         className="group/item flex items-center gap-3 rounded-2xl p-3 transition hover:bg-slate-50 dark:hover:bg-slate-800/70"
                       >
-                        <span
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition group-hover/item:scale-105"
-                          style={{ backgroundColor: `${c.color}18`, color: c.color }}
-                        >
+                        <span className="cat-icon-soft flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition group-hover/item:scale-105">
                           <c.icon className="h-5 w-5" />
                         </span>
                         <span className="min-w-0">
                           <span className="flex items-center gap-1.5">
                             <span className="text-sm font-bold text-ink-950 dark:text-slate-100">{c.name}</span>
-                            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-extrabold" style={{ backgroundColor: `${c.color}18`, color: c.color }}>
+                            <span className="cat-pill rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums">
                               {count}
                             </span>
                           </span>
@@ -159,7 +169,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Search className="h-4 w-4 shrink-0 text-accent" />
             <span className="hidden truncate sm:inline">{t('nav.searchPlaceholder')}</span>
-            <kbd className="ml-auto hidden shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-extrabold text-slate-500 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 sm:inline-block">
+            <kbd className="kbd-key ml-auto hidden shrink-0 px-2 sm:inline-flex">
               Ctrl K
             </kbd>
           </button>
@@ -201,9 +211,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={toggleTheme}
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 active:scale-95 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
           >
-            {dark ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+            {dark ? (
+              <Sun key="sun" className="animate-theme-icon h-4.5 w-4.5" />
+            ) : (
+              <Moon key="moon" className="animate-theme-icon h-4.5 w-4.5" />
+            )}
           </button>
 
           <button
@@ -226,9 +240,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <NavLink
                   key={c.id}
                   to={`/category/${c.id}`}
+                  data-category={c.id}
                   onClick={() => setOpen(false)}
-                  className="flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-sm font-bold"
-                  style={{ backgroundColor: `${c.color}14`, color: c.color }}
+                  className="cat-pill flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-sm font-bold"
                 >
                   <c.icon className="h-4 w-4 shrink-0" />
                   <span className="truncate">{c.name.replace(' Tools', '')}</span>

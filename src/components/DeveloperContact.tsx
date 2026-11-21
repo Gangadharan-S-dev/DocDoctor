@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState, type RefObject, type SVGProps } from 'react'
-import { createPortal } from 'react-dom'
-import { Check, CircleAlert, Copy, ExternalLink, Mail, MessageCircle, Send, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, Mail, MessageCircle, Send, X } from 'lucide-react'
+import StudioDialog from './StudioDialog'
+import { showToast } from '../lib/toast'
 import './DeveloperContact.css'
 
 /**
  * Developer credit strip (rendered as the last row of the site footer) plus a
- * self-contained contact dialog. Isolated on purpose: no shared state, no new
- * dependencies, styles live in DeveloperContact.css.
+ * contact dialog built on the unified StudioDialog & global Toaster system.
  */
 
 const DEVELOPER = 'Gangadharan S.'
@@ -14,7 +14,7 @@ const EMAIL = 'gangadharan1218@gmail.com'
 const DISCORD = 'gangadharan1'
 const GITHUB_USER = 'Gangadharan-S-dev'
 const GITHUB_URL = `https://github.com/${GITHUB_USER}`
-/** Must match the closing animation duration in DeveloperContact.css. */
+/** Matches the exit animation duration of StudioDialog in index.css. */
 const EXIT_MS = 180
 
 // lucide-react 1.x ships no brand marks, so the two platform logos are inlined (Simple Icons paths).
@@ -69,7 +69,6 @@ export default function DeveloperContact() {
 
   const close = useCallback(() => setPhase((p) => (p === 'open' ? 'closing' : p)), [])
 
-  // Keep the dialog mounted for the exit animation, then unmount it.
   useEffect(() => {
     if (phase !== 'closing') return
     const t = window.setTimeout(() => setPhase('closed'), EXIT_MS)
@@ -97,73 +96,30 @@ export default function DeveloperContact() {
           </button>
         </div>
       </div>
-      {phase !== 'closed' && <ContactDialog id={dialogId} closing={phase === 'closing'} onClose={close} returnFocusRef={triggerRef} />}
+      {phase !== 'closed' && (
+        <ContactDialog
+          id={dialogId}
+          closing={phase === 'closing'}
+          onClose={close}
+          returnFocusRef={triggerRef}
+        />
+      )}
     </>
   )
 }
-
-type Toast = { id: number; ok: boolean; message: string }
 
 type DialogProps = {
   id: string
   closing: boolean
   onClose: () => void
-  /** Focus target on close. Explicit because Safari doesn't focus buttons on click. */
   returnFocusRef: RefObject<HTMLButtonElement | null>
 }
 
 function ContactDialog({ id, closing, onClose, returnFocusRef }: DialogProps) {
-  const panelRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
-  const pressedBackdrop = useRef(false)
   const titleId = useId()
   const descId = useId()
   const [copied, setCopied] = useState<string | null>(null)
-  const [toast, setToast] = useState<Toast | null>(null)
-
-  // Scroll lock, background inert, initial focus — all restored on unmount.
-  useEffect(() => {
-    const returnTo = returnFocusRef.current
-    const { body, documentElement } = document
-    const prevOverflow = body.style.overflow
-    const prevPaddingRight = body.style.paddingRight
-    const scrollbarWidth = window.innerWidth - documentElement.clientWidth
-    body.style.overflow = 'hidden'
-    if (scrollbarWidth > 0) body.style.paddingRight = `${scrollbarWidth}px`
-    const root = document.getElementById('root')
-    const prevInert = root?.inert ?? false
-    if (root) root.inert = true
-    closeRef.current?.focus()
-    return () => {
-      body.style.overflow = prevOverflow
-      body.style.paddingRight = prevPaddingRight
-      if (root) root.inert = prevInert // must be lifted before refocusing inside #root
-      returnTo?.focus({ preventScroll: true })
-    }
-  }, [returnFocusRef])
-
-  // Escape closes; Tab / Shift+Tab stay inside the dialog.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-        return
-      }
-      const panel = panelRef.current
-      if (e.key !== 'Tab' || !panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'))
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      const active = document.activeElement
-      const outside = !panel.contains(active)
-      if (e.shiftKey && (active === first || outside)) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && (active === last || outside)) { e.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
 
   useEffect(() => {
     if (!copied) return
@@ -171,18 +127,14 @@ function ContactDialog({ id, closing, onClose, returnFocusRef }: DialogProps) {
     return () => window.clearTimeout(t)
   }, [copied])
 
-  useEffect(() => {
-    if (!toast) return
-    const t = window.setTimeout(() => setToast(null), 2200)
-    return () => window.clearTimeout(t)
-  }, [toast])
-
   const copy = async (key: string, value: string, label: string) => {
     const ok = await copyText(value)
-    if (ok) setCopied(key)
-    const message = ok ? `${label} copied to clipboard` : 'Couldn’t copy — please copy it manually'
-    // New id each time so a repeated copy re-triggers the toast animation.
-    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, ok, message }))
+    if (ok) {
+      setCopied(key)
+      showToast(`${label} copied to clipboard`, 'success')
+    } else {
+      showToast('Couldn’t copy — please copy it manually', 'error')
+    }
   }
 
   const copyButton = (key: string, value: string, label: string) => {
@@ -200,91 +152,80 @@ function ContactDialog({ id, closing, onClose, returnFocusRef }: DialogProps) {
     )
   }
 
-  return createPortal(
-    <div
-      className={`dd-contact${closing ? ' is-closing' : ''}`}
-      onMouseDown={(e) => { pressedBackdrop.current = e.target === e.currentTarget }}
-      onClick={(e) => {
-        // Only a press that starts *and* ends on the backdrop closes (no accidental close after text selection).
-        if (pressedBackdrop.current && e.target === e.currentTarget) onClose()
-        pressedBackdrop.current = false
-      }}
+  return (
+    <StudioDialog
+      id={id}
+      open
+      closing={closing}
+      onClose={onClose}
+      labelledBy={titleId}
+      describedBy={descId}
+      initialFocusRef={closeRef}
+      returnFocusRef={returnFocusRef}
+      mobileSheet
+      panelClassName="max-w-md overflow-y-auto p-6 max-[480px]:px-4 max-[480px]:pt-5 max-[480px]:pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
     >
-      <div
-        ref={panelRef}
-        id={id}
-        className="dd-contact__panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descId}
-      >
-        <div className="dd-contact__header">
-          <span className="dd-contact__avatar" aria-hidden="true">GS</span>
-          <div className="dd-contact__heading">
-            <h2 id={titleId} className="dd-contact__title">Get in touch</h2>
-            <p id={descId} className="dd-contact__desc">
-              DocDoctor is developed &amp; designed by {DEVELOPER} Reach out for feedback, bug reports or collaboration.
-            </p>
-          </div>
-          <button ref={closeRef} type="button" className="dd-contact__close" onClick={onClose} aria-label="Close contact dialog">
-            <X aria-hidden="true" />
-          </button>
+      <div className="dd-contact__header">
+        <span className="dd-contact__avatar" aria-hidden="true">GS</span>
+        <div className="dd-contact__heading">
+          <h2 id={titleId} className="dd-contact__title">Get in touch</h2>
+          <p id={descId} className="dd-contact__desc">
+            DocDoctor is developed &amp; designed by {DEVELOPER} Reach out for feedback, bug reports or collaboration.
+          </p>
         </div>
-
-        <ul className="dd-contact__list">
-          <li className="dd-contact__item">
-            <a className="dd-contact__main" href={`mailto:${EMAIL}`} aria-label={`Send an email to ${EMAIL}`}>
-              <span className="dd-contact__icon dd-contact__icon--email"><Mail aria-hidden="true" /></span>
-              <span className="dd-contact__text">
-                <span className="dd-contact__label">Email</span>
-                <span className="dd-contact__value">{EMAIL}</span>
-              </span>
-              <Send className="dd-contact__hint" aria-hidden="true" />
-            </a>
-            {copyButton('email', EMAIL, 'Email address')}
-          </li>
-
-          <li className="dd-contact__item">
-            <div className="dd-contact__main">
-              <span className="dd-contact__icon dd-contact__icon--discord"><DiscordIcon /></span>
-              <span className="dd-contact__text">
-                <span className="dd-contact__label">Discord</span>
-                <span className="dd-contact__value dd-contact__value--select">{DISCORD}</span>
-              </span>
-            </div>
-            {copyButton('discord', DISCORD, 'Discord username')}
-          </li>
-
-          <li className="dd-contact__item">
-            <a
-              className="dd-contact__main"
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open GitHub profile ${GITHUB_USER} (opens in a new tab)`}
-            >
-              <span className="dd-contact__icon dd-contact__icon--github"><GithubIcon /></span>
-              <span className="dd-contact__text">
-                <span className="dd-contact__label">GitHub</span>
-                <span className="dd-contact__value">{GITHUB_USER}</span>
-              </span>
-              <ExternalLink className="dd-contact__hint" aria-hidden="true" />
-            </a>
-            {copyButton('github', GITHUB_URL, 'GitHub profile link')}
-          </li>
-        </ul>
+        <button
+          ref={closeRef}
+          type="button"
+          className="dd-contact__close"
+          onClick={onClose}
+          aria-label="Close contact dialog"
+        >
+          <X aria-hidden="true" />
+        </button>
       </div>
 
-      <div className="dd-contact__toast-region" role="status" aria-live="polite">
-        {toast && (
-          <span key={toast.id} className={`dd-contact__toast${toast.ok ? '' : ' is-error'}`}>
-            {toast.ok ? <Check aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
-            {toast.message}
-          </span>
-        )}
-      </div>
-    </div>,
-    document.body,
+      <ul className="dd-contact__list">
+        <li className="dd-contact__item">
+          <a className="dd-contact__main" href={`mailto:${EMAIL}`} aria-label={`Send an email to ${EMAIL}`}>
+            <span className="dd-contact__icon dd-contact__icon--email"><Mail aria-hidden="true" /></span>
+            <span className="dd-contact__text">
+              <span className="dd-contact__label">Email</span>
+              <span className="dd-contact__value">{EMAIL}</span>
+            </span>
+            <Send className="dd-contact__hint" aria-hidden="true" />
+          </a>
+          {copyButton('email', EMAIL, 'Email address')}
+        </li>
+
+        <li className="dd-contact__item">
+          <div className="dd-contact__main">
+            <span className="dd-contact__icon dd-contact__icon--discord"><DiscordIcon /></span>
+            <span className="dd-contact__text">
+              <span className="dd-contact__label">Discord</span>
+              <span className="dd-contact__value dd-contact__value--select">{DISCORD}</span>
+            </span>
+          </div>
+          {copyButton('discord', DISCORD, 'Discord username')}
+        </li>
+
+        <li className="dd-contact__item">
+          <a
+            className="dd-contact__main"
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open GitHub profile ${GITHUB_USER} (opens in a new tab)`}
+          >
+            <span className="dd-contact__icon dd-contact__icon--github"><GithubIcon /></span>
+            <span className="dd-contact__text">
+              <span className="dd-contact__label">GitHub</span>
+              <span className="dd-contact__value">{GITHUB_USER}</span>
+            </span>
+            <ExternalLink className="dd-contact__hint" aria-hidden="true" />
+          </a>
+          {copyButton('github', GITHUB_URL, 'GitHub profile link')}
+        </li>
+      </ul>
+    </StudioDialog>
   )
 }

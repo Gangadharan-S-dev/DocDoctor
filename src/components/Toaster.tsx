@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Sparkles, Info, X } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Sparkles, Info, X } from 'lucide-react'
 import { subscribeToasts, type ToastItem } from '../lib/toast'
 
 export default function Toaster() {
@@ -27,7 +27,7 @@ export default function Toaster() {
     <div
       aria-live="polite"
       aria-atomic="false"
-      className="pointer-events-none fixed bottom-5 right-5 z-50 flex flex-col items-end gap-2"
+      className="pointer-events-none fixed bottom-5 right-5 z-[110] flex flex-col items-end gap-2"
     >
       {items.map((toast) => (
         <div
@@ -38,6 +38,8 @@ export default function Toaster() {
             <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-500" />
           ) : toast.tone === 'accent' ? (
             <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+          ) : toast.tone === 'error' ? (
+            <CircleAlert className="h-4 w-4 shrink-0 text-rose-500" />
           ) : (
             <Info className="h-4 w-4 shrink-0 text-blue-500" />
           )}

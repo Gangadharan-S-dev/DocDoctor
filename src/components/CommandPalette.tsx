@@ -8,7 +8,7 @@ import { CATEGORIES, TOOLS, categoryById, formatSize, popularTools, toolById, ty
 import { getFavorites, getRecent } from '../lib/prefs'
 import { getSessionHistory } from '../lib/sessionHistory'
 import { downloadBlob } from '../processing/download'
-import { BorderBeam } from './FuturisticPrimitives'
+import StudioDialog from './StudioDialog'
 
 export type StudioAccentId = 'cobalt' | 'coral' | 'emerald' | 'violet'
 
@@ -261,83 +261,75 @@ function CommandPaletteDialog({
   }, [entries, safeIdx, navigate, onClose])
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Quick tool launcher"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 px-4 pt-[10vh] backdrop-blur-md"
-      onClick={onClose}
+    <StudioDialog
+      open
+      onClose={onClose}
+      ariaLabel="Quick tool launcher"
+      initialFocusRef={inputRef}
+      placement="top"
+      panelClassName="glass-grain max-w-2xl bg-white/95 backdrop-blur-xl dark:bg-[#0a1020]/95"
     >
-      <div
-        className="animate-bento-pop glass-grain relative w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 shadow-2xl backdrop-blur-xl dark:border-slate-700/80 dark:bg-[#0a1020]/95"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <BorderBeam durationSec={8} />
+      {/* Search header */}
+      <div className="relative z-10 flex items-center gap-3 border-b border-slate-200/80 px-5 py-4 dark:border-slate-800">
+        <span className="brand-grad flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm">
+          <Search className="h-4 w-4" />
+        </span>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setActiveIdx(0) }}
+          placeholder='Try "shrink pdf", "50kb", "blur face", or "dark mode"…'
+          className="w-full bg-transparent text-base font-semibold text-ink-950 placeholder:text-slate-400 focus:outline-none dark:text-white dark:placeholder:text-slate-500"
+          autoComplete="off"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => { setQuery(''); setActiveIdx(0) }}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink-950 dark:hover:bg-slate-800 dark:hover:text-white"
+            aria-label="Clear search"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="kbd-key hover:bg-slate-50 dark:hover:bg-slate-700"
+        >
+          ESC
+        </button>
+      </div>
 
-        {/* Search header */}
-        <div className="relative z-10 flex items-center gap-3 border-b border-slate-200/80 px-5 py-4 dark:border-slate-800">
-          <span className="brand-grad flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm">
-            <Search className="h-4 w-4" />
-          </span>
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => { setQuery(e.target.value); setActiveIdx(0) }}
-            placeholder='Try "shrink pdf", "50kb", "blur face", or "dark mode"…'
-            className="w-full bg-transparent text-base font-semibold text-ink-950 placeholder:text-slate-400 focus:outline-none dark:text-white dark:placeholder:text-slate-500"
-            autoComplete="off"
-          />
-          {query && (
+      {/* Vibrant category pills (WCAG AA contrast) */}
+      <div className="relative z-10 flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-5 py-2.5 dark:border-slate-800/80">
+        <button
+          type="button"
+          onClick={() => { setCat('all'); setActiveIdx(0) }}
+          className={`rounded-full px-3 py-1 text-xs font-bold transition ${
+            cat === 'all'
+              ? 'bg-ink-950 text-white dark:bg-white dark:text-ink-950'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700'
+          }`}
+        >
+          All ({TOOLS.length})
+        </button>
+        {CATEGORIES.map((c) => {
+          const active = cat === c.id
+          return (
             <button
+              key={c.id}
               type="button"
-              onClick={() => { setQuery(''); setActiveIdx(0) }}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink-950 dark:hover:bg-slate-800 dark:hover:text-white"
-              aria-label="Clear search"
+              data-category={c.id}
+              onClick={() => { setCat(c.id); setActiveIdx(0) }}
+              className={`rounded-full px-3 py-1 text-xs font-bold transition ${active ? 'text-white shadow-xs' : 'cat-pill hover:brightness-95 dark:hover:brightness-110'}`}
+              style={active ? { backgroundColor: c.color } : undefined}
             >
-              <X className="h-4 w-4" />
+              {c.name.replace(' Tools', '')}
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
-            ESC
-          </button>
-        </div>
-
-        {/* Vibrant category pills */}
-        <div className="relative z-10 flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-5 py-2.5 dark:border-slate-800/80">
-          <button
-            type="button"
-            onClick={() => { setCat('all'); setActiveIdx(0) }}
-            className={`rounded-full px-3 py-1 text-xs font-bold transition ${
-              cat === 'all'
-                ? 'bg-ink-950 text-white dark:bg-white dark:text-ink-950'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700'
-            }`}
-          >
-            All ({TOOLS.length})
-          </button>
-          {CATEGORIES.map((c) => {
-            const active = cat === c.id
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => { setCat(c.id); setActiveIdx(0) }}
-                className="rounded-full px-3 py-1 text-xs font-bold transition"
-                style={
-                  active
-                    ? { backgroundColor: c.color, color: '#fff' }
-                    : { backgroundColor: `${c.color}16`, color: c.color }
-                }
-              >
-                {c.name.replace(' Tools', '')}
-              </button>
-            )
-          })}
-        </div>
+          )
+        })}
+      </div>
 
         {/* Results list */}
         <div className="relative z-10 max-h-[54vh] overflow-y-auto p-2.5">
@@ -417,8 +409,8 @@ function CommandPaletteDialog({
                       }`}
                     >
                       <span
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition"
-                        style={{ backgroundColor: `${c.color}18`, color: c.color }}
+                        data-category={c.id}
+                        className="cat-icon-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition"
                       >
                         <Icon className="h-5 w-5" />
                       </span>
@@ -426,8 +418,8 @@ function CommandPaletteDialog({
                         <span className="flex items-center gap-2">
                           <span className="truncate font-display text-sm font-bold text-ink-950 dark:text-white">{tool.name}</span>
                           <span
-                            className="rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
-                            style={{ backgroundColor: `${c.color}16`, color: c.color }}
+                            data-category={c.id}
+                            className="cat-pill rounded-full px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide"
                           >
                             {tool.acceptLabel.split(',')[0]}
                           </span>
@@ -450,12 +442,11 @@ function CommandPaletteDialog({
         {/* Footer keyboard hints */}
         <div className="relative z-10 flex items-center justify-between border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:bg-[#070c18] dark:text-slate-400">
           <span className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1"><kbd className="rounded bg-white px-1.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">↑↓</kbd> Navigate</span>
-            <span className="inline-flex items-center gap-1"><kbd className="rounded bg-white px-1.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"><CornerDownLeft className="inline h-3 w-3" /></kbd> Run</span>
+            <span className="inline-flex items-center gap-1"><kbd className="kbd-key">↑↓</kbd> Navigate</span>
+            <span className="inline-flex items-center gap-1"><kbd className="kbd-key"><CornerDownLeft className="inline h-3 w-3" /></kbd> Run</span>
           </span>
           <span className="font-mono text-[10px] uppercase tracking-wider">100% LOCAL · ZERO CLOUD</span>
         </div>
-      </div>
-    </div>
+    </StudioDialog>
   )
 }

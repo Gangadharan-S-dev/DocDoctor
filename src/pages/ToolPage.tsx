@@ -4,12 +4,12 @@ import {
   ShieldCheck, FileCheck2, Clock3, Info, Loader2, Download,
   RotateCcw, AlertTriangle, Star, XCircle, Copy, Check, X,
   RotateCw, FlipHorizontal, FlipVertical, Camera, MapPin, Plus, Trash2, ArrowRight, Lock,
-  History, Workflow,
+  History,
 } from 'lucide-react'
 import { TOOLS, categoryById, formatSize, isImplemented, isServerTool, serverEndpointFor, toolById, type Tool } from '../data/tools'
 import UploadArea, { type PickedFile } from '../components/UploadArea'
 import ToolCard from '../components/ToolCard'
-import { ImageLightbox, StudioSkeleton, StudioSlider, WorkspaceStepper } from '../components/StudioControls'
+import { ImageLightbox, PipelineBreadcrumb, StudioSkeleton, StudioSlider, WorkspaceStepper } from '../components/StudioControls'
 import { BorderBeam } from '../components/FuturisticPrimitives'
 import {
   clearSessionHistory,
@@ -1000,7 +1000,7 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
   }, [results, zipSearch])
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <div data-category={tool.category} className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <nav aria-label="Breadcrumb" className="text-sm font-semibold text-slate-500 dark:text-slate-400">
         <Link to="/" className="hover:text-accent">Home</Link> <span aria-hidden>/</span>{' '}
         <Link to={`/category/${cat.id}`} className="hover:text-accent">{cat.name}</Link> <span aria-hidden>/</span>{' '}
@@ -1010,13 +1010,13 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       {/* Category-Adaptive Spatial Tool Header */}
       <div
         className="bento-card bento-dots glass-grain mt-4 p-5 sm:p-7"
-        style={{ backgroundImage: `radial-gradient(460px circle at 96% 12%, ${cat.color}24, transparent 60%)` }}
+        style={{ backgroundImage: `radial-gradient(480px circle at 96% 12%, var(--ws-cat-glow), transparent 60%)` }}
       >
-        <BorderBeam color={cat.color} durationSec={9} />
+        <BorderBeam color="var(--ws-cat)" durationSec={9} />
         <div className="relative z-10 flex flex-wrap items-start gap-4 sm:gap-5">
           <span
             className="icon-3d flex h-15 w-15 shrink-0 items-center justify-center rounded-2xl text-white"
-            style={{ backgroundColor: cat.color }}
+            style={{ background: `linear-gradient(145deg, ${cat.color}, ${cat.color}dd)` }}
           >
             <Icon className="h-7 w-7" />
           </span>
@@ -1037,13 +1037,10 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             </div>
             <p className="mt-1.5 max-w-2xl text-sm text-slate-600 dark:text-slate-300 sm:text-base">{tool.description}</p>
             <div className="mt-3.5 flex flex-wrap gap-2">
-              <span
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold"
-                style={{ backgroundColor: `${cat.color}18`, color: cat.color }}
-              >
+              <span className="cat-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs font-bold">
                 Accepts: {tool.acceptLabel}
               </span>
-              <span className="chip">Max {tool.maxSizeMB} MB{tool.multiple ? ' · Batch' : ''}</span>
+              <span className="chip font-mono tabular-nums">Max {tool.maxSizeMB} MB{tool.multiple ? ' · Batch' : ''}</span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/80 px-3 py-1 text-xs font-extrabold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
                 <ShieldCheck className="h-3.5 w-3.5" /> {live ? '100% in your browser' : `Engine: ${tool.engine}`}
               </span>
@@ -1055,30 +1052,15 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
       {/* Split-Pane Studio Layout */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
       <section className="bento-card p-5 sm:p-7" aria-label={`${tool.name} workspace`}>
-        {pipelineHistory.length > 0 && (
-          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-accent/30 bg-gradient-to-r from-accent-soft/80 via-white/90 to-teal-50/70 px-3.5 py-2.5 text-xs font-bold text-ink-950 shadow-2xs dark:border-blue-500/30 dark:from-blue-500/12 dark:via-[#0d1425] dark:to-teal-500/12 dark:text-slate-100">
-            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-extrabold uppercase tracking-widest text-accent dark:text-blue-300">
-              <Workflow className="h-3.5 w-3.5 shrink-0" /> Pipeline
-            </span>
-            {pipelineHistory.map((stepName, idx) => (
-              <span key={`${stepName}-${idx}`} className="inline-flex items-center gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-xl bg-white/95 px-2.5 py-1 text-[11px] font-bold text-slate-700 ring-1 ring-slate-200/90 dark:bg-[#131d33] dark:text-slate-200 dark:ring-slate-700/80">
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-teal-500/15 font-mono text-[9px] font-extrabold text-teal-700 dark:text-teal-300">
-                    {idx + 1}
-                  </span>
-                  {stepName}
-                </span>
-                <span aria-hidden className="h-[2px] w-3 rounded-full bg-gradient-to-r from-teal-500 to-accent" />
-              </span>
-            ))}
-            <span className="brand-grad inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-extrabold text-white shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-white" />
-              {tool.name}
-            </span>
-          </div>
-        )}
+        <PipelineBreadcrumb
+          steps={pipelineHistory}
+          currentToolName={tool.name}
+          category={tool.category}
+          fileCount={files.length}
+          totalBytes={totalIn}
+        />
 
-        <WorkspaceStepper step={results.length > 0 ? 3 : files.length > 0 ? 2 : 1} />
+        <WorkspaceStepper step={results.length > 0 ? 3 : files.length > 0 ? 2 : 1} category={tool.category} />
 
         <UploadArea tool={tool} files={files} onChange={handleFilesChange} />
 
@@ -4405,8 +4387,8 @@ function ToolWorkspace({ tool }: { tool: Tool }) {
             ))}
           </ul>
           <div className="mt-4 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:text-slate-400">
-            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><kbd className="font-extrabold">Ctrl+V</kbd> Paste file</span>
-            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><kbd className="font-extrabold">Ctrl+K</kbd> Switch tool</span>
+            <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-2 px-2 py-1"><kbd className="kbd-key">Ctrl+V</kbd> Paste file</span>
+            <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface-2 px-2 py-1"><kbd className="kbd-key">Ctrl+K</kbd> Switch tool</span>
           </div>
         </div>
 

@@ -112,35 +112,38 @@ export default function UploadArea({ tool, files, onChange }: {
     <div>
       <div
         role="button" tabIndex={0} aria-label={`Upload ${tool.acceptLabel} files`}
+        data-category={tool.category}
+        data-dragging={drag ? 'true' : undefined}
         onClick={() => inputRef.current?.click()}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files) }}
-        className={`group relative cursor-pointer overflow-hidden rounded-3xl border-2 border-dashed px-6 py-10 text-center transition duration-200 sm:py-14 ${
-          drag
-            ? 'scale-[1.015] border-accent bg-accent-soft/80 shadow-inner ring-4 ring-accent/15'
-            : 'border-slate-300/90 bg-slate-50/70 hover:border-accent/60 hover:bg-accent-soft/35 dark:border-slate-700/90 dark:bg-[#090f1e]/90 dark:hover:border-accent/60'
+        className={`workspace-dropzone group relative cursor-pointer overflow-hidden rounded-3xl border-2 border-dashed bg-surface-2/60 px-6 py-10 text-center transition duration-200 dark:bg-[#090f1e]/90 sm:py-14 ${
+          drag ? 'scale-[1.015]' : ''
         }`}
       >
-        {drag && <BorderBeam durationSec={3.5} />}
-        {/* Precision HUD corner reticles */}
-        <span aria-hidden className="pointer-events-none absolute left-3.5 top-3.5 h-3.5 w-3.5 rounded-tl border-l-2 border-t-2 border-accent/35 transition group-hover:border-accent" />
-        <span aria-hidden className="pointer-events-none absolute right-3.5 top-3.5 h-3.5 w-3.5 rounded-tr border-r-2 border-t-2 border-accent/35 transition group-hover:border-accent" />
-        <span aria-hidden className="pointer-events-none absolute bottom-3.5 left-3.5 h-3.5 w-3.5 rounded-bl border-b-2 border-l-2 border-accent/35 transition group-hover:border-accent" />
-        <span aria-hidden className="pointer-events-none absolute bottom-3.5 right-3.5 h-3.5 w-3.5 rounded-br border-b-2 border-r-2 border-accent/35 transition group-hover:border-accent" />
+        {drag && <BorderBeam color="var(--ws-cat)" durationSec={3.5} />}
+        {/* Precision HUD corner reticles (category-adaptive) */}
+        <span aria-hidden className="pointer-events-none absolute left-3.5 top-3.5 h-3.5 w-3.5 rounded-tl border-l-2 border-t-2 opacity-45 transition group-hover:opacity-100" style={{ borderColor: 'var(--ws-cat)' }} />
+        <span aria-hidden className="pointer-events-none absolute right-3.5 top-3.5 h-3.5 w-3.5 rounded-tr border-r-2 border-t-2 opacity-45 transition group-hover:opacity-100" style={{ borderColor: 'var(--ws-cat)' }} />
+        <span aria-hidden className="pointer-events-none absolute bottom-3.5 left-3.5 h-3.5 w-3.5 rounded-bl border-b-2 border-l-2 opacity-45 transition group-hover:opacity-100" style={{ borderColor: 'var(--ws-cat)' }} />
+        <span aria-hidden className="pointer-events-none absolute bottom-3.5 right-3.5 h-3.5 w-3.5 rounded-br border-b-2 border-r-2 opacity-45 transition group-hover:opacity-100" style={{ borderColor: 'var(--ws-cat)' }} />
 
-        <span className={`brand-grad icon-3d mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}>
+        <span
+          className={`icon-3d mx-auto mb-4 flex h-15 w-15 items-center justify-center rounded-2xl text-white transition duration-200 ${drag ? 'scale-110 -translate-y-1' : 'group-hover:scale-105'}`}
+          style={{ background: 'linear-gradient(145deg, var(--ws-cat), var(--color-accent))' }}
+        >
           <CloudUpload className="h-7 w-7" aria-hidden />
         </span>
         <p className="font-display text-lg font-extrabold text-ink-950 dark:text-white">Drag &amp; drop your {tool.acceptLabel} file{tool.multiple ? 's' : ''} here</p>
         <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-          or browse from your device · paste with <kbd className="rounded-lg border border-slate-200 bg-white px-1.5 py-0.5 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">Ctrl+V</kbd> · Max {tool.maxSizeMB} MB{tool.multiple ? ' · Multiple files supported' : ''}
+          or browse from your device · paste with <kbd className="kbd-key">Ctrl+V</kbd> · <span className="font-mono text-xs tabular-nums">Max {tool.maxSizeMB} MB</span>{tool.multiple ? ' · Multiple files supported' : ''}
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <span className="btn-accent"><FileUp className="h-4 w-4" /> Browse files</span>
           <span className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-600 shadow-2xs dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-slate-300">
-            <Clipboard className="h-3.5 w-3.5 text-accent" /> Paste supported
+            <Clipboard className="cat-text h-3.5 w-3.5" /> Paste supported
           </span>
         </div>
         <input ref={inputRef} type="file" className="hidden" accept={tool.accept === '*' ? undefined : tool.accept} multiple={tool.multiple} onChange={(e) => { if (e.target.files) add(e.target.files); e.target.value = '' }} />
@@ -203,7 +206,7 @@ export default function UploadArea({ tool, files, onChange }: {
 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-bold text-ink-950" title={file.name}>{file.name}</span>
-                    <span className="text-xs text-slate-500">{formatSize(file.size)}</span>
+                    <span className="font-mono text-xs tabular-nums text-slate-500">{formatSize(file.size)}</span>
                   </span>
 
                   {tool.multiple && files.length > 1 && (

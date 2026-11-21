@@ -57,6 +57,7 @@ export default function ToolCard({ tool }: { tool: Tool }) {
     <Link
       ref={cardRef}
       to={`/tool/${tool.id}`}
+      data-category={tool.category}
       onPointerMove={handleMove}
       onPointerLeave={handleLeave}
       className="bento-card tilt-card group flex flex-col p-5 hover:border-slate-300/90 hover:shadow-lift dark:hover:border-slate-700"
@@ -127,20 +128,14 @@ export default function ToolCard({ tool }: { tool: Tool }) {
 
       <span className="relative mt-5 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800/80">
         <span className="flex items-center gap-1.5">
-          <span
-            className="rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide"
-            style={{ backgroundColor: `${cat.color}15`, color: cat.color }}
-          >
+          <span className="cat-pill rounded-lg px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide">
             {primaryFormat}
           </span>
-          <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+          <span className="font-mono text-[11px] font-semibold tabular-nums text-slate-400 dark:text-slate-500">
             ≤{tool.maxSizeMB} MB
           </span>
         </span>
-        <span
-          className="inline-flex items-center gap-0.5 text-xs font-extrabold transition duration-200 group-hover:translate-x-0.5"
-          style={{ color: cat.color }}
-        >
+        <span className="cat-text inline-flex items-center gap-0.5 text-xs font-extrabold transition duration-200 group-hover:translate-x-0.5">
           Open <ArrowUpRight className="h-3.5 w-3.5" />
         </span>
       </span>

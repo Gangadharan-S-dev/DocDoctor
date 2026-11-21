@@ -141,13 +141,12 @@ export function ToolsPage() {
                 <button
                   key={c.id}
                   type="button"
+                  data-category={c.id}
                   onClick={() => setCat(c.id)}
-                  className="rounded-full px-3.5 py-1.5 text-xs font-extrabold transition"
-                  style={
-                    active
-                      ? { backgroundColor: c.color, color: '#fff' }
-                      : { backgroundColor: `${c.color}16`, color: c.color }
-                  }
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-extrabold transition active:scale-[.97] ${
+                    active ? 'text-white shadow-xs' : 'cat-pill hover:brightness-95 dark:hover:brightness-110'
+                  }`}
+                  style={active ? { backgroundColor: c.color } : undefined}
                 >
                   {c.name.replace(' Tools', '')}
                 </button>
