@@ -53,7 +53,7 @@ export function Logo() {
   )
 }
 
-function useTheme(): [boolean, () => void] {
+function useTheme(): [boolean, (origin?: { x: number; y: number }) => void] {
   const [dark, setDark] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('docdoctor:theme')
@@ -67,13 +67,13 @@ function useTheme(): [boolean, () => void] {
     try { localStorage.setItem('docdoctor:theme', dark ? 'dark' : 'light') } catch { /* ignore */ }
   }, [dark])
 
-  const toggle = () => {
+  const toggle = (origin?: { x: number; y: number }) => {
     const next = !dark
     runThemeTransition(() => {
       document.documentElement.classList.toggle('dark', next)
       syncThemeColor(next)
       setDark(next)
-    })
+    }, origin)
   }
 
   return [dark, toggle]
@@ -209,7 +209,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <button
             type="button"
-            onClick={toggleTheme}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+            }}
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 active:scale-95 dark:border-slate-700/80 dark:bg-[#111a2e] dark:text-amber-300 dark:hover:bg-slate-800 sm:h-10 sm:w-10"
           >

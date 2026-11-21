@@ -148,7 +148,7 @@ export function GridBeamCanvas({ className = '' }: { className?: string }) {
 
     let lastTs = performance.now()
     const loop = (ts: number) => {
-      if (!visible || document.hidden || scrolling) {
+      if (!visible || document.hidden || scrolling || document.documentElement.classList.contains('theme-transitioning')) {
         rafId = 0
         return
       }
@@ -161,7 +161,7 @@ export function GridBeamCanvas({ className = '' }: { className?: string }) {
     }
 
     const start = () => {
-      if (rafId || !visible || document.hidden || scrolling) return
+      if (rafId || !visible || document.hidden || scrolling || document.documentElement.classList.contains('theme-transitioning')) return
       lastTs = performance.now()
       rafId = requestAnimationFrame(loop)
     }
@@ -191,6 +191,11 @@ export function GridBeamCanvas({ className = '' }: { className?: string }) {
 
     const mo = new MutationObserver(() => {
       palette = readThemePalette()
+      if (document.documentElement.classList.contains('theme-transitioning')) {
+        stop()
+      } else {
+        start()
+      }
     })
     mo.observe(document.documentElement, {
       attributes: true,

@@ -114,7 +114,7 @@ All UI primitives are custom TypeScript React components in `src/components/`:
 ## 6. Styling Approach & Motion
 
 - **Tailwind v4 utilities + `@layer components`** in [src/index.css](src/index.css): `.btn-primary`, `.btn-accent`, `.btn-ghost`, `.btn-shimmer`, `.bento-card`, `.glass-spatial`, `.glass-bar`, `.input`, `.chip`, `.cat-pill`, `.kbd-key`, `.studio-range`, `.segmented-track`, `.segmented-pill`, `.display-hero`, `.display-section`, `.display-card`.
-- **Zero-Jank Theme Switching**: Theme toggles use `runThemeTransition()` ([src/lib/viewTransition.ts](src/lib/viewTransition.ts)) to suppress per-element CSS transitions for a single paint frame (`html.theme-switching`) so dark/light switching is instant and locked at 60/120fps, paired with a lightweight GPU-composited icon micro-animation (`.animate-theme-icon`).
+- **60/120fps Circular Theme Reveal**: Theme toggles use `runThemeTransition()` ([src/lib/viewTransition.ts](src/lib/viewTransition.ts)) with `flushSync` + `html.theme-transitioning` (suppressing per-element transitions, ambient loops, and `backdrop-filter` readbacks during capture) and Web Animations API `clipPath` playback on `::view-transition-new(root)` from the clicked button origin, falling back cleanly under `prefers-reduced-motion: reduce`.
 - **Accessibility**: Global `:focus-visible` outline (`2px solid var(--color-accent)`), `prefers-reduced-motion: reduce` kill switch, WCAG AA category pills, and keyboard focus trapping in `StudioDialog`.
 
 ---
